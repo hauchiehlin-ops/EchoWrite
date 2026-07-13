@@ -250,6 +250,16 @@ kbd {
   animation: ping 1.5s infinite ease-in-out;
 }
 
+.status-dot.yellow {
+  background-color: #f59e0b;
+  box-shadow: 0 0 8px #f59e0b;
+}
+
+.status-dot.red {
+  background-color: #ef4444;
+  box-shadow: 0 0 8px #ef4444;
+}
+
 .status-text {
   font-size: 0.7rem;
   color: var(--text-secondary);

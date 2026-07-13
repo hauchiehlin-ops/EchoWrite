@@ -5,6 +5,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const styleCards = document.querySelectorAll('.style-section .style-card');
   const historyList = document.getElementById('historyList');
 
+  detectWebGPUStatus();
+
   // 1. 載入並還原已選定的風格與模型
   chrome.storage.local.get(['selectedStyle', 'selectedModel', 'history'], (data) => {
     if (data.selectedStyle) {
@@ -82,3 +84,49 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+// 偵測真實的 WebGPU 可用性與 GPU 資訊，取代原本寫死的「WebGPU 引擎就緒」文字
+// （無論瀏覽器是否真的支援 WebGPU 都顯示同樣的字樣是誤導使用者的）。
+async function detectWebGPUStatus() {
+  const badge = document.getElementById('gpuBadge');
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+
+  if (!badge || !statusDot || !statusText) return;
+
+  if (!navigator.gpu) {
+    badge.textContent = '規則排版模式';
+    statusDot.className = 'status-dot yellow';
+    statusText.textContent = '此瀏覽器不支援 WebGPU，將使用規則排版降級';
+    return;
+  }
+
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) {
+      badge.textContent = '規則排版模式';
+      statusDot.className = 'status-dot yellow';
+      statusText.textContent = '找不到可用的 GPU，將使用規則排版降級';
+      return;
+    }
+
+    badge.textContent = 'WebGPU Local';
+    statusDot.className = 'status-dot green';
+
+    let gpuLabel = 'WebGPU 引擎就緒';
+    try {
+      const info = adapter.info || (await adapter.requestAdapterInfo?.());
+      if (info?.description || info?.vendor) {
+        gpuLabel = `WebGPU 就緒（${info.description || info.vendor}）`;
+      }
+    } catch (e) {
+      // requestAdapterInfo 在部分瀏覽器版本受限，忽略即可，不影響主要狀態顯示
+    }
+    statusText.textContent = gpuLabel;
+  } catch (err) {
+    badge.textContent = '規則排版模式';
+    statusDot.className = 'status-dot red';
+    statusText.textContent = 'WebGPU 偵測失敗，將使用規則排版降級';
+    console.warn('EchoWrite: WebGPU detection failed:', err);
+  }
+}

@@ -14,7 +14,7 @@
         <img src="icons/icon48.png" alt="EchoWrite Logo" class="pulse-logo">
         <span class="app-name">EchoWrite</span>
       </div>
-      <div class="badge">WebGPU Local</div>
+      <div class="badge" id="gpuBadge">偵測中...</div>
     </header>
 
     <!-- Main Card -->
@@ -85,8 +85,8 @@
     <!-- Footer -->
     <footer class="app-footer">
       <div class="status-indicator">
-        <span class="status-dot green"></span>
-        <span class="status-text" id="statusText">WebGPU 引擎就緒</span>
+        <span class="status-dot green" id="statusDot"></span>
+        <span class="status-text" id="statusText">偵測 WebGPU 中...</span>
       </div>
     </footer>
   </div>

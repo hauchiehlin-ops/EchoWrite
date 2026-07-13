@@ -227,6 +227,19 @@ function stopRecording(isError = false) {
   }
 }
 
+// 逐一消費 WebLLM 的串流 chunk，邊生成邊回報累積文字給 content.js 即時顯示。
+async function consumeStreamAndReport(chunkStream) {
+  let text = "";
+  for await (const chunk of chunkStream) {
+    const delta = chunk.choices?.[0]?.delta?.content || "";
+    if (delta) {
+      text += delta;
+      chrome.runtime.sendMessage({ target: 'content', type: 'processing-stream', text: text });
+    }
+  }
+  return text;
+}
+
 // 處理並發送重組潤飾結果
 async function processAndSendResult() {
   let textToProcess = rawTranscript.trim();
@@ -254,7 +267,7 @@ async function processAndSendResult() {
   
   let resultText = "";
   const engine = await initWebLLM();
-  
+
   if (engine) {
     try {
       const messages = [
@@ -262,13 +275,19 @@ async function processAndSendResult() {
         { role: "user", content: `[風格偏好: ${style}] 請優化以下逐字稿：\n${textToProcess}` }
       ];
 
+      // 使用串流輸出：Token 一產生就送回頁面即時顯示，降低使用者感知延遲，
+      // 不用像過去一樣整段生成完才有任何畫面回饋。
+      const chunkStream = await engine.chat.completions.create({
+        messages: messages,
+        temperature: 0.3,
+        stream: true,
+      });
+
       // 加入超時保護，避免 WebGPU worker 崩潰導致永遠卡住
-      const reply = await Promise.race([
-        engine.chat.completions.create({ messages: messages, temperature: 0.3 }),
+      resultText = await Promise.race([
+        consumeStreamAndReport(chunkStream),
         new Promise((_, reject) => setTimeout(() => reject(new Error("AI 推理超時 (WebGPU 可能已崩潰)")), 15000))
       ]);
-      
-      resultText = reply.choices[0].message.content;
     } catch (err) {
       console.error("WebLLM 推理失敗，降級為規則排版", err);
       resultText = fallbackFormat(textToProcess);
