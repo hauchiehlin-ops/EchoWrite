@@ -6,6 +6,8 @@ let isRecording = false;
 let rawTranscript = "";
 let llmEngine = null;
 let initPromise = null;
+let isProcessingPending = false;
+let latestInterim = "";
 
 const SYSTEM_PROMPT = 
   "你是一個極致智慧的台灣語音助理，專門將零碎、雜亂的口語轉寫稿重塑為優雅、邏輯清晰、段落分明的書面文章。請嚴格遵守以下重構規範：\n" +
@@ -59,6 +61,8 @@ function startSpeechRecognition() {
   if (isRecording) return;
   isRecording = true;
   rawTranscript = "";
+  latestInterim = "";
+  isProcessingPending = false;
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
@@ -86,6 +90,7 @@ function startSpeechRecognition() {
         interimTranscript += event.results[i][0].transcript;
       }
     }
+    latestInterim = interimTranscript;
 
     // 將即時轉寫文字送回頁面（樂觀排版 / 即時回饋）
     chrome.runtime.sendMessage({
@@ -107,25 +112,48 @@ function startSpeechRecognition() {
     if (isRecording) {
       // 若非手動停止（例如環境太靜音自動中斷），則重新啟動以維持錄音連續性
       try { recognition.start(); } catch (e) {}
+    } else if (isProcessingPending) {
+      isProcessingPending = false;
+      processAndSendResult();
     }
   };
 
   recognition.start();
 }
 
-// 停止錄音並處理結果
+// 停止錄音
 async function stopRecording(isError = false) {
   if (!isRecording) return;
   isRecording = false;
 
-  if (recognition) {
-    recognition.onend = null;
-    recognition.stop();
-  }
-
   chrome.runtime.sendMessage({ target: 'content', type: 'recording-stopped' });
 
-  if (isError || !rawTranscript.trim()) {
+  if (isError) {
+    if (recognition) {
+      recognition.onend = null;
+      recognition.stop();
+    }
+    chrome.runtime.sendMessage({ target: 'content', type: 'processing-finished', text: "" });
+    return;
+  }
+
+  if (recognition) {
+    isProcessingPending = true;
+    recognition.stop(); // 這會觸發最後一發 onresult 與隨後的 onend
+  } else {
+    chrome.runtime.sendMessage({ target: 'content', type: 'processing-finished', text: "" });
+  }
+}
+
+// 處理並發送重組潤飾結果
+async function processAndSendResult() {
+  let textToProcess = rawTranscript.trim();
+  if (!textToProcess) {
+    textToProcess = latestInterim.trim();
+  }
+
+  if (!textToProcess) {
+    console.log("EchoWrite: 轉寫文本為空，不進行 AI 重組。");
     chrome.runtime.sendMessage({ target: 'content', type: 'processing-finished', text: "" });
     return;
   }
@@ -147,7 +175,7 @@ async function stopRecording(isError = false) {
     try {
       const messages = [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: `[風格偏好: ${style}] 請優化以下逐字稿：\n${rawTranscript}` }
+        { role: "user", content: `[風格偏好: ${style}] 請優化以下逐字稿：\n${textToProcess}` }
       ];
 
       const reply = await engine.chat.completions.create({
@@ -157,11 +185,11 @@ async function stopRecording(isError = false) {
       resultText = reply.choices[0].message.content;
     } catch (err) {
       console.error("WebLLM 推理失敗，降級為規則排版", err);
-      resultText = fallbackFormat(rawTranscript);
+      resultText = fallbackFormat(textToProcess);
     }
   } else {
     // 降級為規則排版
-    resultText = fallbackFormat(rawTranscript);
+    resultText = fallbackFormat(textToProcess);
   }
 
   // 3. 透過 background 儲存歷史紀錄
