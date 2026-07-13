@@ -7,3 +7,7 @@
 *.db
 *.log
 .typeless/
+*.xcframework
+/scripts/build
+/scripts/build_win
+
