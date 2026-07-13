@@ -9,6 +9,7 @@ async function setupOffscreen() {
     console.warn('EchoWrite: chrome.offscreen is not supported in this browser.');
     return false;
   }
+
   let hasExisting = false;
   try {
     const existingContexts = await chrome.runtime.getContexts({
@@ -16,10 +17,12 @@ async function setupOffscreen() {
     });
     hasExisting = existingContexts.length > 0;
   } catch (e) {
-    console.log('EchoWrite: chrome.runtime.getContexts is not supported in this version. Falling back to create try-catch.');
+    console.log('EchoWrite: chrome.runtime.getContexts not supported, falling back.');
   }
 
   if (hasExisting) {
+    console.log('EchoWrite: Offscreen document already exists, marking as ready.');
+    offscreenReady = true; // 已存在的 offscreen 一定已完成載入
     return true;
   }
 
@@ -28,14 +31,34 @@ async function setupOffscreen() {
     await chrome.offscreen.createDocument({
       url: 'offscreen.html',
       reasons: ['AUDIO_PLAYBACK', 'USER_MEDIA'],
-      justification: 'EchoWrite needs microphone access and DOM APIs to record audio and run local WebGPU LLM.'
+      justification: 'EchoWrite needs microphone access and DOM APIs for speech recognition.'
     });
     console.log('EchoWrite: Offscreen document created, waiting for ready signal...');
+
+    // 等待 offscreen-ready 信號，最多等 3 秒
+    await new Promise((resolve) => {
+      const check = setInterval(() => {
+        if (offscreenReady) {
+          clearInterval(check);
+          resolve();
+        }
+      }, 50);
+      setTimeout(() => {
+        clearInterval(check);
+        if (!offscreenReady) {
+          console.warn('EchoWrite: Offscreen ready timeout, proceeding anyway.');
+          offscreenReady = true;
+        }
+        resolve();
+      }, 3000);
+    });
+
     return true;
   } catch (err) {
     const errMsg = err?.message || String(err);
     if (errMsg.includes('Only a single offscreen document')) {
-      console.log('EchoWrite: Offscreen document already exists.');
+      console.log('EchoWrite: Offscreen document already exists (from catch).');
+      offscreenReady = true;
       return true;
     } else {
       console.error('EchoWrite: Failed to create offscreen document:', err);
@@ -44,34 +67,20 @@ async function setupOffscreen() {
   }
 }
 
-// 傳送訊息給 Offscreen Document，若尚未就緒則排入佇列
+// 傳送訊息給 Offscreen Document
 function sendToOffscreen(message) {
-  if (offscreenReady) {
-    chrome.runtime.sendMessage(message).catch((err) => {
-      console.warn("EchoWrite: Message to offscreen failed:", err.message);
-    });
-  } else {
-    console.log("EchoWrite: Offscreen not ready yet, queuing message:", message.type);
-    pendingMessages.push(message);
-  }
-}
-
-// 清空排隊的訊息
-function flushPendingMessages() {
-  console.log("EchoWrite: Flushing " + pendingMessages.length + " pending messages.");
-  const msgs = pendingMessages.slice();
-  pendingMessages = [];
-  for (const msg of msgs) {
-    chrome.runtime.sendMessage(msg).catch((err) => {
-      console.warn("EchoWrite: Flushed message failed:", err.message);
-    });
-  }
+  console.log('EchoWrite: sendToOffscreen:', message.type, 'ready=' + offscreenReady);
+  chrome.runtime.sendMessage(message).catch((err) => {
+    console.warn('EchoWrite: Message to offscreen failed:', err.message);
+  });
 }
 
 // 監聽全域快捷鍵 Alt + S
 chrome.commands.onCommand.addListener(async (command) => {
+  console.log('EchoWrite: Command received:', command);
   if (command === 'toggle-recording') {
     const success = await setupOffscreen();
+    console.log('EchoWrite: setupOffscreen result:', success, 'offscreenReady:', offscreenReady);
     if (success) {
       sendToOffscreen({ target: 'offscreen', type: 'toggle-recording' });
     }
@@ -82,15 +91,14 @@ chrome.commands.onCommand.addListener(async (command) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // ====== 來自 offscreen.js 的就緒信號 ======
   if (message.target === 'background' && message.type === 'offscreen-ready') {
-    console.log("EchoWrite: Offscreen document is ready!");
+    console.log('EchoWrite: Offscreen ready signal received!');
     offscreenReady = true;
-    flushPendingMessages();
     return;
   }
 
   if (message.target === 'background') {
-    // 處理 content.js 發起的錄音與切換事件
     if (message.type === 'toggle-recording') {
+      console.log('EchoWrite: toggle-recording from content.js');
       setupOffscreen().then((success) => {
         if (success) sendToOffscreen({ target: 'offscreen', type: 'toggle-recording' });
       });
@@ -115,14 +123,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     }
   } else if (message.target === 'content') {
-    // 轉發來自 offscreen.js 處理完畢的成果到當前的 content tab
+    // 轉發來自 offscreen.js 的成果到當前 content tab
+    console.log('EchoWrite: Forwarding to content tab:', message.type);
     chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
       if (tabs[0]) {
+        console.log('EchoWrite: Sending to tab', tabs[0].id);
         chrome.tabs.sendMessage(tabs[0].id, message).catch((e) => {
-          // 靜默捕獲分頁關閉等異常
+          console.warn('EchoWrite: Failed to send to tab:', e.message);
         });
+      } else {
+        console.warn('EchoWrite: No active tab found!');
       }
     });
   }
   return true;
 });
+
+console.log('EchoWrite: background.js loaded.');
