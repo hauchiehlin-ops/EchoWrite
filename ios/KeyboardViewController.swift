@@ -18,6 +18,9 @@ class KeyboardViewController: UIInputViewController {
     /// 逾時後改為提示使用者先開啟 App 一次。
     private let resultTimeoutSeconds: TimeInterval = 20
 
+    /// 錄音中往左滑動超過此距離（點）即視為取消手勢。
+    private let swipeToCancelThreshold: CGFloat = 60
+
     override func viewDidLoad() {
         super.viewDidLoad()
         EchoWriteShared.configureSharedModelDirectory()
@@ -41,6 +44,33 @@ class KeyboardViewController: UIInputViewController {
             recordButton.widthAnchor.constraint(equalToConstant: 220),
             recordButton.heightAnchor.constraint(equalToConstant: 50)
         ])
+
+        // 錄音中「往左滑動取消」手勢：不需先停止/等待 AI 處理，直接捨棄錄音。
+        let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handleSwipeToCancel(_:)))
+        recordButton.addGestureRecognizer(panGesture)
+    }
+
+    @objc func handleSwipeToCancel(_ gesture: UIPanGestureRecognizer) {
+        guard isRecording else { return }
+        let translation = gesture.translation(in: view)
+        let leftwardOffset = min(0, translation.x) // 只允許往左位移，往右不跟隨
+
+        switch gesture.state {
+        case .changed:
+            recordButton.transform = CGAffineTransform(translationX: leftwardOffset, y: 0)
+            recordButton.alpha = 1.0 - min(0.6, abs(leftwardOffset) / (swipeToCancelThreshold * 3))
+        case .ended, .cancelled:
+            if leftwardOffset <= -swipeToCancelThreshold {
+                cancelRecording()
+            } else {
+                UIView.animate(withDuration: 0.2) {
+                    self.recordButton.transform = .identity
+                    self.recordButton.alpha = 1.0
+                }
+            }
+        default:
+            break
+        }
     }
 
     @objc func recordButtonTapped() {
@@ -122,6 +152,29 @@ class KeyboardViewController: UIInputViewController {
             recordButton.backgroundColor = .systemOrange
             isRecording = false
         }
+    }
+
+    /// 往左滑動取消：直接丟棄錄音，不寫入任何請求、不通知主 App、不觸發 AI 推理。
+    func cancelRecording() {
+        guard isRecording else { return }
+        isRecording = false
+
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        audioEngine = nil
+
+        if let audioURL = EchoWriteShared.sharedAudioURL {
+            try? FileManager.default.removeItem(at: audioURL)
+        }
+
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.warning)
+
+        UIView.animate(withDuration: 0.2) {
+            self.recordButton.transform = .identity
+            self.recordButton.alpha = 1.0
+        }
+        resetButton()
     }
 
     /// 停止錄音後，**不在本進程執行任何 AI 推理**：

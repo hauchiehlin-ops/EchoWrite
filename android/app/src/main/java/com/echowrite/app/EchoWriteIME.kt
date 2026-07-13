@@ -4,6 +4,7 @@ import android.inputmethodservice.InputMethodService
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.InputConnection
 import android.widget.Button
@@ -21,6 +22,10 @@ class EchoWriteIME : InputMethodService() {
     private var modelsReady = false
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var progressPoller: Runnable? = null
+
+    // 錄音中「往左滑動取消」手勢狀態
+    private var swipeStartX = 0f
+    private var isDraggingToCancel = false
 
     companion object {
         const val MODEL_KIND_WHISPER = 0
@@ -52,8 +57,46 @@ class EchoWriteIME : InputMethodService() {
         recordButton?.setOnClickListener {
             toggleRecording()
         }
+        setupSwipeToCancel()
 
         return keyboardView
+    }
+
+    // 錄音中往左滑動超過此距離即視為取消手勢，鏡射 iOS/Chrome 的取消錄音互動。
+    private fun setupSwipeToCancel() {
+        val thresholdPx = 80 * resources.displayMetrics.density
+        val maxTranslationPx = 300 * resources.displayMetrics.density
+
+        recordButton?.setOnTouchListener { view, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    swipeStartX = event.rawX
+                    isDraggingToCancel = false
+                    false // 不消費，讓 Button 正常處理按下視覺效果
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (isRecording) {
+                        val dx = (event.rawX - swipeStartX).coerceAtMost(0f)
+                        view.translationX = dx.coerceAtLeast(-maxTranslationPx)
+                        view.alpha = 1f - (-dx / maxTranslationPx).coerceIn(0f, 0.6f)
+                        isDraggingToCancel = -dx > thresholdPx
+                    }
+                    false
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.animate().translationX(0f).alpha(1f).setDuration(150).start()
+                    if (isDraggingToCancel && isRecording) {
+                        isDraggingToCancel = false
+                        cancelRecording()
+                        true // 消費此次 UP，避免同時觸發 click 導致 toggleRecording() 又被呼叫
+                    } else {
+                        isDraggingToCancel = false
+                        false // 一般點擊：交給 onClickListener 處理 toggleRecording()
+                    }
+                }
+                else -> false
+            }
+        }
     }
 
     private fun ensureModelsReady() {
@@ -186,6 +229,24 @@ class EchoWriteIME : InputMethodService() {
                 writeWavHeader(audioFile, totalBytesWritten)
             }
         }
+    }
+
+    // 往左滑動取消：直接丟棄錄音，不呼叫 processAudioFile，不寫入結果。
+    private fun cancelRecording() {
+        if (!isRecording) return
+        isRecording = false // 讓錄音背景執行緒的 while 迴圈結束並寫入標頭後自然收尾
+
+        audioRecord?.stop()
+        audioRecord?.release()
+        audioRecord = null
+
+        // 延遲刪除，避開與錄音執行緒收尾寫檔的競態
+        mainHandler.postDelayed({
+            tempAudioFile?.let { if (it.exists()) it.delete() }
+        }, 150)
+
+        recordButton?.text = "🎙️ 按下說話 (EchoWrite)"
+        recordButton?.isEnabled = true
     }
 
     private fun stopRecordingAndProcessAI() {
