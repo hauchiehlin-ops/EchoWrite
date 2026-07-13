@@ -1,6 +1,7 @@
 import Cocoa
 import SwiftUI
 import AVFoundation
+import Carbon
 
 @main
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -20,7 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let whisperPath = Bundle.main.path(forResource: "whisper-medium-q5", ofType: "bin") ?? ""
             let llmPath = Bundle.main.path(forResource: "qwen-2.5-7b-q4", ofType: "gguf") ?? ""
-            try echowrite_core.initialize(whisperPath: whisperPath, llmPath: llmPath)
+            try ewInitialize(whisperPath: whisperPath, llmPath: llmPath)
             print("EchoWrite: Core initialized successfully.")
         } catch {
             print("EchoWrite: Failed to initialize core: \(error)")
@@ -73,11 +74,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         do {
-            try echowrite_core.startRecording()
+            try ewStartRecording()
             isRecording = true
             updateStatusBarIcon(active: true)
             // 觸發微弱震動 (Haptic)
-            NSHapticFeedbackManager.defaultPerformer.perform(.generic, when: .now)
+            NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
             print("EchoWrite: Recording started...")
         } catch {
             print("EchoWrite: Failed to start recording: \(error)")
@@ -92,14 +93,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 // 停止錄音並啟動本地 ASR + SLM 處理
-                let resultText = try echowrite_core.stopRecordingAndProcess(style: "professional")
+                let resultText = try ewStopRecordingAndProcess(style: "professional")
                 
                 DispatchQueue.main.async {
                     if !resultText.isEmpty {
                         // 使用 Accessibility API / CGEvent 直接在目前焦點游標處打字
                         self.simulateTyping(text: resultText)
                     }
-                    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, when: .now)
+                    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
                 }
             } catch {
                 print("EchoWrite: Process failed: \(error)")
@@ -108,18 +109,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func simulateTyping(text: String) {
-        // 利用 CGEvent 模擬鍵盤輸入，將文字寫入目前的文字焦點區 (Active Cursor)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+
         let source = CGEventSource(stateID: .combinedSessionState)
-        
-        // 將字串轉為 UTF-16 陣列，這對 emoji 和中文字元尤為重要
-        let utf16Chars = Array(text.utf16)
-        
-        let postEvent = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)
-        postEvent?.keyboardGetUnicodeString(maxStringLength: utf16Chars.count, actualStringLength: nil, unicodeString: UnsafeMutablePointer(mutating: utf16Chars))
-        postEvent?.post(tap: .cguiEventTap)
-        
-        let releaseEvent = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
-        releaseEvent?.post(tap: .cguiEventTap)
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true)
+        keyDown?.flags = .maskCommand
+        keyDown?.post(tap: .cghidEventTap)
+
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false)
+        keyUp?.flags = .maskCommand
+        keyUp?.post(tap: .cghidEventTap)
     }
     
     func updateStatusBarIcon(active: Bool) {

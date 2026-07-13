@@ -1,0 +1,253 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1A0000010000000000000001 /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000010000000000000001 /* KeyboardViewController.swift */; };
+		1A0000010000000000000002 /* echowrite_core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000010000000000000002 /* echowrite_core.swift */; };
+		1A0000010000000000000003 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B0000010000000000000003 /* UIKit.framework */; };
+		1A0000010000000000000004 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B0000010000000000000004 /* Foundation.framework */; };
+		1A0000010000000000000005 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B0000010000000000000005 /* AVFoundation.framework */; };
+		1A0000010000000000000006 /* EchoWriteCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B0000010000000000000006 /* EchoWriteCore.xcframework */; };
+		1A0000010000000000000007 /* EchoWriteBindingsShim.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B0000010000000000000009 /* EchoWriteBindingsShim.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1B0000010000000000000001 /* KeyboardViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardViewController.swift; sourceTree = "<group>"; };
+		1B0000010000000000000002 /* echowrite_core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = echowrite_core.swift; sourceTree = "<group>"; };
+		1B0000010000000000000003 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		1B0000010000000000000004 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		1B0000010000000000000005 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		1B0000010000000000000006 /* EchoWriteCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = EchoWriteCore.xcframework; sourceTree = "<group>"; };
+		1B0000010000000000000007 /* EchoWriteKeyboard.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = EchoWriteKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		1B0000010000000000000008 /* EchoWriteKeyboard-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = EchoWriteKeyboard-Info.plist; sourceTree = "<group>"; };
+		1B0000010000000000000009 /* EchoWriteBindingsShim.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoWriteBindingsShim.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1C0000010000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A0000010000000000000003 /* UIKit.framework in Frameworks */,
+				1A0000010000000000000004 /* Foundation.framework in Frameworks */,
+				1A0000010000000000000005 /* AVFoundation.framework in Frameworks */,
+				1A0000010000000000000006 /* EchoWriteCore.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1D0000010000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				1D0000010000000000000002 /* Sources */,
+				1D0000010000000000000003 /* Frameworks */,
+				1D0000010000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1D0000010000000000000002 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				1B0000010000000000000001 /* KeyboardViewController.swift */,
+				1B0000010000000000000002 /* echowrite_core.swift */,
+				1B0000010000000000000009 /* EchoWriteBindingsShim.swift */,
+				1B0000010000000000000008 /* EchoWriteKeyboard-Info.plist */,
+			);
+			path = "";
+			sourceTree = "<group>";
+		};
+		1D0000010000000000000003 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				1B0000010000000000000003 /* UIKit.framework */,
+				1B0000010000000000000004 /* Foundation.framework */,
+				1B0000010000000000000005 /* AVFoundation.framework */,
+				1B0000010000000000000006 /* EchoWriteCore.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		1D0000010000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1B0000010000000000000007 /* EchoWriteKeyboard.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1E0000010000000000000001 /* EchoWriteKeyboard */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1F0000010000000000000001 /* Build configuration list for PBXNativeTarget \"EchoWriteKeyboard\" */;
+			buildPhases = (
+				1C0000010000000000000001 /* Frameworks */,
+				1C0000010000000000000002 /* Sources */,
+				1C0000010000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = EchoWriteKeyboard;
+			productName = EchoWriteKeyboard;
+			productReference = 1B0000010000000000000007 /* EchoWriteKeyboard.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1F0000010000000000000000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = 1F0000010000000000000002 /* Build configuration list for PBXProject \"EchoWriteKeyboard\" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1D0000010000000000000001;
+			productRefGroup = 1D0000010000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1E0000010000000000000001 /* EchoWriteKeyboard */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1C0000010000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1C0000010000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A0000010000000000000001 /* KeyboardViewController.swift in Sources */,
+				1A0000010000000000000002 /* echowrite_core.swift in Sources */,
+				1A0000010000000000000007 /* EchoWriteBindingsShim.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		200000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)";
+				INFOPLIST_FILE = EchoWriteKeyboard-Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0.0;
+				MODULEMAP_FILE = "$(SRCROOT)/echowrite_coreFFI.modulemap";
+				OTHER_LDFLAGS = "$(inherited) -lc++ -framework Accelerate -framework CoreML";
+				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.keyboard;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		200000010000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)";
+				INFOPLIST_FILE = EchoWriteKeyboard-Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0.0;
+				MODULEMAP_FILE = "$(SRCROOT)/echowrite_coreFFI.modulemap";
+				OTHER_LDFLAGS = "$(inherited) -lc++ -framework Accelerate -framework CoreML";
+				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.keyboard;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		210000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = iphoneos;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.keyboard;
+				PRODUCT_NAME = EchoWriteKeyboard;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		210000010000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SDKROOT = iphoneos;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.keyboard;
+				PRODUCT_NAME = EchoWriteKeyboard;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1F0000010000000000000001 /* Build configuration list for PBXNativeTarget "EchoWriteKeyboard" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				200000010000000000000001 /* Debug */,
+				200000010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1F0000010000000000000002 /* Build configuration list for PBXProject "EchoWriteKeyboard" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				210000010000000000000001 /* Debug */,
+				210000010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1F0000010000000000000000 /* Project object */;
+}

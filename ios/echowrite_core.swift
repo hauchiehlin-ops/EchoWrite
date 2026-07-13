@@ -525,6 +525,14 @@ public func initialize(whisperPath: String, llmPath: String)throws  {try rustCal
     )
 }
 }
+public func processAudioFile(audioPath: String, style: String)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_process_audio_file(
+        FfiConverterString.lower(audioPath),
+        FfiConverterString.lower(style),$0
+    )
+})
+}
 public func startRecording()throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
     uniffi_echowrite_core_fn_func_start_recording($0
     )
@@ -557,6 +565,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_initialize() != 37740) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_process_audio_file() != 39260) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_start_recording() != 2237) {

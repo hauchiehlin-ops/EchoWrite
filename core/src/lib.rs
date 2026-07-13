@@ -5,6 +5,9 @@ pub mod asr;
 pub mod llm;
 pub mod formatter;
 pub mod database;
+pub mod ffi;
+#[cfg(target_os = "android")]
+pub mod jni;
 
 use std::sync::Mutex;
 use lazy_static::lazy_static;
@@ -77,29 +80,52 @@ pub fn stop_recording_and_process(style: String) -> Result<String, EchoWriteErro
         (audio_path, whisper_model, llm_model)
     }; // 此處 Mutex 鎖自動釋放！
 
-    // 2. 呼叫本地 ASR 進行語音轉文字 (在鎖外執行)
-    let raw_text = asr::transcribe(audio_path, &whisper_model)
-        .map_err(|e| EchoWriteError::ProcessError { message: e })?;
-    
-    if raw_text.trim().is_empty() {
-        return Ok(String::new());
-    }
-    
-    // 3. 呼叫本地 SLM (Qwen-2.5) 進行句式潤飾與重組 (在鎖外執行)
-    let polished_text = llm::polish_text(raw_text, style, &llm_model)
-        .map_err(|e| EchoWriteError::ProcessError { message: e })?;
-    
-    // 4. 套用台灣繁體中文排版規範
-    let formatted_text = formatter::format_text(polished_text);
-    
-    // 5. 存入本地歷史紀錄
-    database::save_history(&formatted_text)
-        .map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
-    
-    Ok(formatted_text)
+    process_audio_file_internal(audio_path, style, whisper_model, llm_model)
+}
+
+#[uniffi::export]
+pub fn process_audio_file(audio_path: String, style: String) -> Result<String, EchoWriteError> {
+    let (whisper_model, llm_model) = {
+        let state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
+        let whisper_model = state.whisper_model_path.clone()
+            .ok_or_else(|| EchoWriteError::ProcessError { message: "Whisper model not initialized".to_string() })?;
+        let llm_model = state.llm_model_path.clone()
+            .ok_or_else(|| EchoWriteError::ProcessError { message: "LLM model not initialized".to_string() })?;
+        (whisper_model, llm_model)
+    };
+
+    process_audio_file_internal(audio_path, style, whisper_model, llm_model)
 }
 
 #[uniffi::export]
 pub fn format_only(text: String) -> String {
     formatter::format_text(text)
+}
+
+fn process_audio_file_internal(
+    audio_path: String,
+    style: String,
+    whisper_model: String,
+    llm_model: String,
+) -> Result<String, EchoWriteError> {
+    // 2. 呼叫本地 ASR 進行語音轉文字 (在鎖外執行)
+    let raw_text = asr::transcribe(audio_path, &whisper_model)
+        .map_err(|e| EchoWriteError::ProcessError { message: e })?;
+
+    if raw_text.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    // 3. 呼叫本地 SLM 進行句式潤飾與重組 (在鎖外執行)
+    let polished_text = llm::polish_text(raw_text, style, &llm_model)
+        .map_err(|e| EchoWriteError::ProcessError { message: e })?;
+
+    // 4. 套用台灣繁體中文排版規範
+    let formatted_text = formatter::format_text(polished_text);
+
+    // 5. 存入本地歷史紀錄
+    database::save_history(&formatted_text)
+        .map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
+
+    Ok(formatted_text)
 }

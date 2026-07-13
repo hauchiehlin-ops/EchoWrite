@@ -1,0 +1,4 @@
+module echowrite_coreFFI {
+    header "echowrite_coreFFI.h"
+    export *
+}

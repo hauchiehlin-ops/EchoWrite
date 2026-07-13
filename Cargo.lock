@@ -455,6 +455,7 @@ dependencies = [
  "dirs-next",
  "encoding_rs",
  "hound",
+ "jni",
  "lazy_static",
  "llama-cpp-2",
  "regex",

@@ -1,0 +1,258 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		3A0000010000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0000010000000000000001 /* AppDelegate.swift */; };
+		3A0000010000000000000003 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B0000010000000000000003 /* Cocoa.framework */; };
+		3A0000010000000000000004 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B0000010000000000000004 /* SwiftUI.framework */; };
+		3A0000010000000000000005 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B0000010000000000000005 /* AVFoundation.framework */; };
+		3A0000010000000000000006 /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B0000010000000000000006 /* Carbon.framework */; };
+		3A0000010000000000000007 /* EchoWriteBindingsShim.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0000010000000000000009 /* EchoWriteBindingsShim.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		3B0000010000000000000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		3B0000010000000000000003 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
+		3B0000010000000000000004 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		3B0000010000000000000005 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		3B0000010000000000000006 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
+		3B0000010000000000000007 /* EchoWriteMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EchoWriteMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3B0000010000000000000008 /* EchoWriteMac-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = EchoWriteMac-Info.plist; sourceTree = "<group>"; };
+		3B0000010000000000000009 /* EchoWriteBindingsShim.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoWriteBindingsShim.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		3C0000010000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3A0000010000000000000003 /* Cocoa.framework in Frameworks */,
+				3A0000010000000000000004 /* SwiftUI.framework in Frameworks */,
+				3A0000010000000000000005 /* AVFoundation.framework in Frameworks */,
+				3A0000010000000000000006 /* Carbon.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		3D0000010000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				3D0000010000000000000002 /* Sources */,
+				3D0000010000000000000003 /* Frameworks */,
+				3D0000010000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		3D0000010000000000000002 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				3B0000010000000000000001 /* AppDelegate.swift */,
+				3B0000010000000000000009 /* EchoWriteBindingsShim.swift */,
+				3B0000010000000000000008 /* EchoWriteMac-Info.plist */,
+			);
+			path = "";
+			sourceTree = "<group>";
+		};
+		3D0000010000000000000003 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3B0000010000000000000003 /* Cocoa.framework */,
+				3B0000010000000000000004 /* SwiftUI.framework */,
+				3B0000010000000000000005 /* AVFoundation.framework */,
+				3B0000010000000000000006 /* Carbon.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		3D0000010000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				3B0000010000000000000007 /* EchoWriteMac.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3E0000010000000000000001 /* EchoWriteMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3F0000010000000000000001 /* Build configuration list for PBXNativeTarget \"EchoWriteMac\" */;
+			buildPhases = (
+				3C0000010000000000000001 /* Frameworks */,
+				3C0000010000000000000002 /* Sources */,
+				3C0000010000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = EchoWriteMac;
+			productName = EchoWriteMac;
+			productReference = 3B0000010000000000000007 /* EchoWriteMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		3F0000010000000000000000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = 3F0000010000000000000002 /* Build configuration list for PBXProject \"EchoWriteMac\" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 3D0000010000000000000001;
+			productRefGroup = 3D0000010000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3E0000010000000000000001 /* EchoWriteMac */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		3C0000010000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3C0000010000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3A0000010000000000000001 /* AppDelegate.swift in Sources */,
+				3A0000010000000000000007 /* EchoWriteBindingsShim.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		400000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = "$(ARCHS_STANDARD)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../ios";
+				INFOPLIST_FILE = EchoWriteMac-Info.plist;
+				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/../target/release";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				MODULEMAP_FILE = "$(PROJECT_DIR)/../ios/echowrite_coreFFI.modulemap";
+				OTHER_LDFLAGS = "$(inherited) -lechowrite_core -lc++ -framework Accelerate -framework CoreML";
+				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.mac;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		400000010000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = "$(ARCHS_STANDARD)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../ios";
+				INFOPLIST_FILE = EchoWriteMac-Info.plist;
+				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/../target/release";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				MODULEMAP_FILE = "$(PROJECT_DIR)/../ios/echowrite_coreFFI.modulemap";
+				OTHER_LDFLAGS = "$(inherited) -lechowrite_core -lc++ -framework Accelerate -framework CoreML";
+				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.mac;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		410000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = "$(ARCHS_STANDARD)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = EchoWriteMac-Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.mac;
+				PRODUCT_NAME = EchoWriteMac;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		410000010000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = "$(ARCHS_STANDARD)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = EchoWriteMac-Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.mac;
+				PRODUCT_NAME = EchoWriteMac;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3F0000010000000000000001 /* Build configuration list for PBXNativeTarget "EchoWriteMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				400000010000000000000001 /* Debug */,
+				400000010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3F0000010000000000000002 /* Build configuration list for PBXProject "EchoWriteMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				410000010000000000000001 /* Debug */,
+				410000010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 3F0000010000000000000000 /* Project object */;
+}

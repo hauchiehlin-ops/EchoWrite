@@ -136,15 +136,14 @@ class KeyboardViewController: UIInputViewController {
             
             do {
                 // 直接調用 UniFFI 跨平台接口
-                // 這裡傳入寫好的 WAV 音訊檔案與潤飾風格
                 let whisperModel = Bundle.main.path(forResource: "whisper-small-q4", ofType: "bin") ?? ""
                 let llmModel = Bundle.main.path(forResource: "qwen-2.5-1.5b-q4", ofType: "gguf") ?? ""
                 
                 // 1. 初始化模型 (如果尚未初始化)
-                try echowrite_core.initialize(whisperPath: whisperModel, llmPath: llmModel)
+                try ewInitialize(whisperPath: whisperModel, llmPath: llmModel)
                 
-                // 2. 進行 ASR + LLM 本地端推理
-                let resultText = try echowrite_core.stopRecordingAndProcess(style: "casual")
+                // 2. 針對本次錄製好的 WAV 檔直接進行 ASR + LLM 本地端推理
+                let resultText = try ewProcessAudioFile(audioPath: audioPath, style: "casual")
                 
                 DispatchQueue.main.async {
                     // 3. 將文字直接插入目前的 App 輸入框 (如 LINE, Safari)

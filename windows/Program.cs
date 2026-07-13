@@ -12,14 +12,20 @@ namespace EchoWrite
         private static bool _isRecording = false;
         
         // 匯入 Rust 核心庫 (DLL FFI)
-        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
-        private static extern int initialize(string whisperPath, string llmPath);
+        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int echowrite_initialize(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string whisperPath,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string llmPath);
 
         [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
-        private static extern int start_recording();
+        private static extern int echowrite_start_recording();
 
-        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
-        private static extern IntPtr stop_recording_and_process(string style);
+        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr echowrite_stop_recording_and_process(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string style);
+
+        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void echowrite_free_string(IntPtr ptr);
 
         // Windows API: 用於模擬鍵盤輸入與全域快捷鍵
         [DllImport("user32.dll")]
@@ -37,7 +43,12 @@ namespace EchoWrite
             // 1. 初始化本地 Rust 核心引擎
             string whisperModel = AppDomain.CurrentDomain.BaseDirectory + "models\\whisper-medium-q5.bin";
             string llmModel = AppDomain.CurrentDomain.BaseDirectory + "models\\qwen-2.5-7b-q4.gguf";
-            initialize(whisperModel, llmModel);
+            int initResult = echowrite_initialize(whisperModel, llmModel);
+            if (initResult != 0)
+            {
+                MessageBox.Show("EchoWrite 核心初始化失敗，請確認模型檔案是否存在。", "EchoWrite", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
 
             // 2. 建立系統托盤圖示 (System Tray Icon)
             _trayIcon = new NotifyIcon()
@@ -52,7 +63,7 @@ namespace EchoWrite
             var form = new KeyHandlerForm();
             RegisterHotKey(form.Handle, 1, 0x0001, 0x53); // MOD_ALT = 0x0001, S = 0x53
 
-            Application.Run();
+            Application.Run(form);
         }
 
         private static void TrayIcon_Click(object sender, EventArgs e)
@@ -74,7 +85,7 @@ namespace EchoWrite
 
         private static void StartRecording()
         {
-            int result = start_recording();
+            int result = echowrite_start_recording();
             if (result != 0)
             {
                 _trayIcon.ShowBalloonTip(3000, "EchoWrite 錄音錯誤", "無法啟動錄音，請確定麥克風裝置已連接，且已在 Windows 「隱私權設定」中核准麥克風權限。", ToolTipIcon.Error);
@@ -94,8 +105,8 @@ namespace EchoWrite
             Task.Run(() =>
             {
                 // 呼叫 Rust FFI 進行本地 AI 轉寫與重組
-                IntPtr textPtr = stop_recording_and_process("professional");
-                string resultText = Marshal.PtrToStringUni(textPtr);
+                IntPtr textPtr = echowrite_stop_recording_and_process("professional");
+                string resultText = Marshal.PtrToStringUTF8(textPtr);
 
                 if (!string.IsNullOrEmpty(resultText))
                 {
@@ -103,6 +114,7 @@ namespace EchoWrite
                     SimulateTyping(resultText);
                 }
 
+                echowrite_free_string(textPtr);
                 _trayIcon.Text = "EchoWrite - 按 Alt + S 開始錄音";
             });
         }
@@ -157,6 +169,15 @@ namespace EchoWrite
         // 用於攔截全域快捷鍵的隱藏 Form
         private class KeyHandlerForm : Form
         {
+            public KeyHandlerForm()
+            {
+                ShowInTaskbar = false;
+                WindowState = FormWindowState.Minimized;
+                FormBorderStyle = FormBorderStyle.FixedToolWindow;
+                Opacity = 0;
+                Load += (_, _) => Hide();
+            }
+
             protected override void WndProc(ref Message m)
             {
                 if (m.Msg == 0x0312) // WM_HOTKEY
