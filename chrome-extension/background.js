@@ -46,8 +46,12 @@ chrome.commands.onCommand.addListener(async (command) => {
 // 監聽來自 content.js 或 offscreen.js 的訊息並進行轉發
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target === 'background') {
-    // 處理 content.js 發起的錄音事件
-    if (message.type === 'start-recording-request') {
+    // 處理 content.js 發起的錄音與切換事件
+    if (message.type === 'toggle-recording') {
+      setupOffscreen().then(() => {
+        chrome.runtime.sendMessage({ target: 'offscreen', type: 'toggle-recording' });
+      });
+    } else if (message.type === 'start-recording-request') {
       setupOffscreen().then(() => {
         chrome.runtime.sendMessage({ target: 'offscreen', type: 'start-recording' });
       });
@@ -56,7 +60,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   } else if (message.target === 'content') {
     // 轉發來自 offscreen.js 處理完畢的成果到當前的 content tab
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    // 使用 lastFocusedWindow 代替 currentWindow，防止 Service Worker 背景查詢返回 undefined
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
       if (tabs[0]) {
         chrome.tabs.sendMessage(tabs[0].id, message);
       }
