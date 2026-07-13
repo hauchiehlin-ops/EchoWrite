@@ -1,15 +1,24 @@
 // EchoWrite Popup logic (popup.js)
 
 document.addEventListener('DOMContentLoaded', () => {
-  const styleCards = document.querySelectorAll('.style-card');
+  const modelCards = document.querySelectorAll('.model-section .style-card');
+  const styleCards = document.querySelectorAll('.style-section .style-card');
   const historyList = document.getElementById('historyList');
 
-  // 1. 載入並還原已選定的風格偏好
-  chrome.storage.local.get(['selectedStyle', 'history'], (data) => {
+  // 1. 載入並還原已選定的風格與模型
+  chrome.storage.local.get(['selectedStyle', 'selectedModel', 'history'], (data) => {
     if (data.selectedStyle) {
       styleCards.forEach(card => {
         if (card.dataset.style === data.selectedStyle) {
-          setActiveCard(card);
+          setActiveCard(card, styleCards);
+        }
+      });
+    }
+
+    if (data.selectedModel) {
+      modelCards.forEach(card => {
+        if (card.dataset.model === data.selectedModel) {
+          setActiveCard(card, modelCards);
         }
       });
     }
@@ -20,10 +29,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // 3. 風格卡片切換點擊事件
+  // 3. 模型卡片切換事件
+  modelCards.forEach(card => {
+    card.addEventListener('click', () => {
+      setActiveCard(card, modelCards);
+      const model = card.dataset.model;
+      chrome.storage.local.set({ selectedModel: model }, () => {
+        console.log('EchoWrite: 模型已更新為 ' + model);
+        // 通知 background -> offscreen 重新加載新模型
+        chrome.runtime.sendMessage({ target: 'background', type: 'model-changed', model: model });
+      });
+    });
+  });
+
+  // 4. 風格卡片切換點擊事件
   styleCards.forEach(card => {
     card.addEventListener('click', () => {
-      setActiveCard(card);
+      setActiveCard(card, styleCards);
       const style = card.dataset.style;
       chrome.storage.local.set({ selectedStyle: style }, () => {
         console.log('EchoWrite:風格偏好已更新為 ' + style);
@@ -31,8 +53,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  function setActiveCard(activeCard) {
-    styleCards.forEach(card => card.classList.remove('active'));
+  function setActiveCard(activeCard, group) {
+    group.forEach(card => card.classList.remove('active'));
     activeCard.classList.add('active');
   }
 

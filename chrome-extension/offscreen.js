@@ -11,13 +11,35 @@ let isProcessingPending = false;
 let latestInterim = "";
 let webllmModule = null;
 
-const SYSTEM_PROMPT = 
-  "你是一個極致智慧的台灣語音助理，專門將零碎、雜亂的口語轉寫稿重塑為優雅、邏輯清晰、段落分明的書面文章。請嚴格遵守以下重構規範：\n" +
-  "1. 標點重建：分析語意結構，在合理處添加逗號與句號。若有說話引用，必須使用繁體引號「」與『』。\n" +
-  "2. 智慧分段：當說話內容出現主題轉換（如從敘事轉為條列、或討論不同議題）時，自動插入換行符號（\\n\\n）進行分段，避免產生冗長字牆。\n" +
-  "3. 智慧橋接：自動修正使用者的思考停頓、口吃、改口與贅詞（例如：將『我們明天...呃...那個...兩點開會』自動橋接為『我們明天兩點開會。』）。\n" +
-  "4. 在地化規範：使用台灣繁體標點。中英文/數字夾雜時自動加空格。將大陸用語（如：屏幕、內存、軟件）轉換為台灣用語（如：螢幕、記憶體、軟體）。\n" +
-  "5. 輸出限制：直接輸出重構後的文本，絕對不可包含 any 你自己的說明、旁白、引言或客套回應。";
+// ASR 信心度門檻：低於此值的辨識結果將被過濾（0.0 ~ 1.0）
+const ASR_CONFIDENCE_THRESHOLD = 0.4;
+
+const SYSTEM_PROMPT = [
+  "你是一個極致精準的台灣繁體中文語音轉文字助理。你的唯一任務是將語音辨識產出的零碎口語逐字稿，重塑為正確、流暢、段落分明的書面中文。",
+  "",
+  "## 核心規則",
+  "1. **同音字與語音辨識錯字修正**（最高優先）：",
+  "   - 語音辨識經常混淆同音字，你必須根據上下文語意自動修正。",
+  "   - 常見錯誤範例：的/得/地、在/再、做/作、那/哪、他/她/它、已/以、會/回、是/式/視/試、因為/因位、所以/所已、可以/可已、這個/者個、那個/拿個、什麼/甚麼、怎麼/真麼、應該/因該。",
+  "   - 專有名詞與品牌亦須修正：iPhone/愛瘋、YouTube/優兔、Google/估狗、LINE/賴。",
+  "",
+  "2. **標點符號重建**：",
+  "   - 口語轉寫通常無標點，你必須分析語意在正確位置添加逗號（，）、句號（。）、問號（？）、驚嘆號（！）。",
+  "   - 說話引用使用繁體引號「」，引號中的引號使用『』。",
+  "   - 列舉項目之間使用頓號（、）。",
+  "",
+  "3. **智慧分段**：主題轉換時插入換行分段，避免冗長字牆。",
+  "",
+  "4. **口語贅詞橋接**：",
+  "   - 自動移除思考停頓（呃、嗯、那個、就是說、然後然後、對對對）。",
+  "   - 將改口重複修正為最終意圖，如『我明天...不對後天要開會』→『我後天要開會。』",
+  "",
+  "5. **台灣在地化**：",
+  "   - 使用台灣繁體用語：螢幕（非屏幕）、記憶體（非內存）、軟體（非軟件）、網路（非網絡）、程式（非程序）、資料（非數據）。",
+  "   - 中英文/數字之間自動加半形空格。",
+  "",
+  "6. **嚴格輸出限制**：只輸出重構後的文本。絕對禁止包含任何你自己的說明、旁白、引言、評論或客套語。"
+].join("\n");
 
 // 動態載入 WebLLM 模組（不阻擋核心 ASR 流程）
 async function loadWebLLMModule() {
@@ -51,7 +73,15 @@ async function initWebLLM() {
 
     try {
       const engine = new mod.MLCEngine();
-      console.log("EchoWrite: 正在載入本地端 Qwen 0.5B 模型...");
+      
+      // 取得使用者選擇的模型
+      const modelName = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ target: 'background', type: 'get-model' }, (response) => {
+          resolve(response?.model || 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC');
+        });
+      });
+
+      console.log(`EchoWrite: 正在載入本地端模型 (${modelName})...`);
       
       // 監聽加載進度
       engine.setInitProgressCallback((report) => {
@@ -62,8 +92,8 @@ async function initWebLLM() {
         });
       });
 
-      await engine.reload("Qwen2.5-0.5B-Instruct-q4f16_1-MLC");
-      console.log("EchoWrite: 本地 WebGPU 模型載入完成！");
+      await engine.reload(modelName);
+      console.log(`EchoWrite: 本地 WebGPU 模型載入完成 (${modelName})！`);
       llmEngine = engine;
       return llmEngine;
     } catch (error) {
@@ -106,10 +136,19 @@ function startSpeechRecognition() {
     rawTranscript = "";
 
     for (let i = 0; i < event.results.length; ++i) {
-      if (event.results[i].isFinal) {
-        rawTranscript += event.results[i][0].transcript;
+      const result = event.results[i];
+      const transcript = result[0].transcript;
+      const confidence = result[0].confidence;
+
+      if (result.isFinal) {
+        // 過濾低信心度的雜訊片段（背景噪音、短促雜音等）
+        if (confidence > 0 && confidence < ASR_CONFIDENCE_THRESHOLD) {
+          console.log(`EchoWrite: 過濾低信心度片段 (${(confidence * 100).toFixed(1)}%): '${transcript}'`);
+          continue;
+        }
+        rawTranscript += transcript;
       } else {
-        interimTranscript += event.results[i][0].transcript;
+        interimTranscript += transcript;
       }
     }
     latestInterim = interimTranscript;
@@ -285,6 +324,12 @@ chrome.runtime.onMessage.addListener((message) => {
       startSpeechRecognition();
     } else if (message.type === 'stop-recording') {
       stopRecording();
+    } else if (message.type === 'model-changed') {
+      console.log("EchoWrite: 模型設定變更，準備重新載入引擎: " + message.model);
+      // 清空舊引擎，觸發重新載入
+      llmEngine = null;
+      initPromise = null;
+      initWebLLM();
     }
   }
 });

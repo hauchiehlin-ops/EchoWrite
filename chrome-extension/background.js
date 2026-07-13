@@ -216,6 +216,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ style: data.selectedStyle || 'smart' });
       });
       return true; // 異步回應
+    } else if (message.type === 'get-model') {
+      chrome.storage.local.get(['selectedModel'], (data) => {
+        sendResponse({ model: data.selectedModel || 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC' });
+      });
+      return true; // 異步回應
+    } else if (message.type === 'model-changed') {
+      console.log('EchoWrite: model-changed received, forwarding to offscreen');
+      sendToOffscreen({ target: 'offscreen', type: 'model-changed', model: message.model });
     } else if (message.type === 'save-history') {
       chrome.storage.local.get(['history'], (data) => {
         const history = data.history || [];
