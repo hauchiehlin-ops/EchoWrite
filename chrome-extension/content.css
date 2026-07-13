@@ -77,6 +77,19 @@
   -webkit-text-fill-color: transparent;
 }
 
+.ew-duration {
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.45);
+  margin-left: 2px;
+}
+
+.ew-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .ew-shortcut {
   font-size: 0.65rem;
   color: rgba(255, 255, 255, 0.4);
@@ -84,6 +97,28 @@
   padding: 2px 6px;
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ew-cancel-btn {
+  pointer-events: auto;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.65rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.ew-cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.85);
+  color: #fff;
 }
 
 /* 3D Wave Animations */

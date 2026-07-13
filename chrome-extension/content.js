@@ -4,6 +4,9 @@ let activeElement = null;
 let widgetEl = null;
 let originalValue = "";
 let originalPlaceholder = "";
+let isCurrentlyRecording = false;
+let durationTimer = null;
+let recordingStartedAt = 0;
 
 // 監聽鍵盤 Alt + S 快捷鍵 (如果 commands 失敗時的備用)
 window.addEventListener('keydown', (e) => {
@@ -13,8 +16,42 @@ window.addEventListener('keydown', (e) => {
     activeElement = document.activeElement;
     // 請求背景 Service Worker 開啟/關閉錄音
     chrome.runtime.sendMessage({ target: 'background', type: 'toggle-recording' });
+    return;
+  }
+
+  // Esc 鍵：錄音中可直接取消，不觸發 AI 重組
+  if (e.key === 'Escape' && isCurrentlyRecording) {
+    e.preventDefault();
+    cancelRecording();
   }
 });
+
+function cancelRecording() {
+  chrome.runtime.sendMessage({ target: 'background', type: 'cancel-recording-request' });
+}
+
+function startDurationTimer() {
+  recordingStartedAt = Date.now();
+  stopDurationTimer();
+  durationTimer = setInterval(updateDurationDisplay, 1000);
+  updateDurationDisplay();
+}
+
+function stopDurationTimer() {
+  if (durationTimer) {
+    clearInterval(durationTimer);
+    durationTimer = null;
+  }
+}
+
+function updateDurationDisplay() {
+  const el = widgetEl && widgetEl.querySelector('#ewDuration');
+  if (!el) return;
+  const elapsedSec = Math.floor((Date.now() - recordingStartedAt) / 1000);
+  const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+  const ss = String(elapsedSec % 60).padStart(2, '0');
+  el.textContent = `${mm}:${ss}`;
+}
 
 // 監聽來自 background.js 的事件 (來自 offscreen)
 chrome.runtime.onMessage.addListener((message) => {
@@ -22,9 +59,11 @@ chrome.runtime.onMessage.addListener((message) => {
     switch (message.type) {
       case 'recording-started':
         activeElement = document.activeElement;
+        isCurrentlyRecording = true;
         showWidget();
         updateWidgetText("🎤 正在聆聽，請開始說話...");
         setWaveState('recording');
+        startDurationTimer();
         break;
 
       case 'interim-result':
@@ -33,8 +72,17 @@ chrome.runtime.onMessage.addListener((message) => {
         break;
 
       case 'recording-stopped':
+        isCurrentlyRecording = false;
+        stopDurationTimer();
         updateWidgetText("🧠 錄音結束，正在呼叫本地 WebGPU 進行重組潤飾...");
         setWaveState('processing');
+        break;
+
+      case 'recording-cancelled':
+        // 使用者主動取消：捨棄轉寫內容，不插入任何文字
+        isCurrentlyRecording = false;
+        stopDurationTimer();
+        hideWidget();
         break;
 
       case 'model-progress':
@@ -48,6 +96,8 @@ chrome.runtime.onMessage.addListener((message) => {
 
       case 'processing-finished':
         // 最終成果輸出
+        isCurrentlyRecording = false;
+        stopDurationTimer();
         insertTextIntoElement(message.text);
         hideWidget();
         break;
@@ -67,8 +117,12 @@ function showWidget() {
         <div class="ew-logo-group">
           <div class="ew-dot green"></div>
           <span class="ew-title">EchoWrite AI</span>
+          <span class="ew-duration" id="ewDuration">00:00</span>
         </div>
-        <span class="ew-shortcut">Alt + S 停止</span>
+        <div class="ew-header-actions">
+          <span class="ew-shortcut">Esc 取消 · Alt+S 停止</span>
+          <button type="button" class="ew-cancel-btn" id="ewCancelBtn" title="取消錄音（不會輸入任何文字）">✕</button>
+        </div>
       </div>
       <div class="ew-wave-wrapper">
         <div class="ew-wave-bar"></div>
@@ -86,9 +140,18 @@ function showWidget() {
     </div>
   `;
   document.body.appendChild(widgetEl);
+
+  const cancelBtn = widgetEl.querySelector('#ewCancelBtn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cancelRecording();
+    });
+  }
 }
 
 function hideWidget() {
+  stopDurationTimer();
   if (widgetEl) {
     widgetEl.classList.add('ew-fade-out');
     setTimeout(() => {

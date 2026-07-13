@@ -209,6 +209,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     } else if (message.type === 'stop-recording-request') {
       sendToOffscreen({ target: 'offscreen', type: 'stop-recording' });
+    } else if (message.type === 'cancel-recording-request') {
+      sendToOffscreen({ target: 'offscreen', type: 'cancel-recording' });
     } else if (message.type === 'request-mic-permission') {
       chrome.tabs.create({ url: 'request_mic.html' });
     } else if (message.type === 'get-style') {

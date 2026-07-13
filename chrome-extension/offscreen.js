@@ -184,6 +184,23 @@ function startSpeechRecognition() {
   recognition.start();
 }
 
+// 取消錄音：捨棄已轉寫的文字，不觸發 AI 重組，也不寫入歷史紀錄。
+function cancelRecording() {
+  if (!isRecording) return;
+  isRecording = false;
+  isProcessingPending = false;
+  rawTranscript = "";
+  latestInterim = "";
+
+  console.log("EchoWrite: cancelRecording called, discarding transcript.");
+
+  if (recognition) {
+    recognition.onend = null;
+    recognition.stop();
+  }
+  chrome.runtime.sendMessage({ target: 'content', type: 'recording-cancelled' });
+}
+
 // 停止錄音
 function stopRecording(isError = false) {
   if (!isRecording) return;
@@ -325,6 +342,8 @@ chrome.runtime.onMessage.addListener((message) => {
       startSpeechRecognition();
     } else if (message.type === 'stop-recording') {
       stopRecording();
+    } else if (message.type === 'cancel-recording') {
+      cancelRecording();
     } else if (message.type === 'model-changed') {
       console.log("EchoWrite: 模型設定變更，準備重新載入引擎: " + message.model);
       // 清空舊引擎，觸發重新載入
