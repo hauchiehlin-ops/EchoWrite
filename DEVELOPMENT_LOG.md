@@ -106,8 +106,21 @@
 
 ---
 
+### 9. Chrome Extension 瀏覽器擴充套件開發
+*   **技術架構**：建立 `chrome-extension/` 目錄。採用 **Manifest V3** 規範與 **Offscreen Document (offscreen.html/js)** 運作模式，避開了 Service Worker 無法呼叫 WebGPU 與麥克風錄音的限制。
+*   **雙引擎本地整合**：
+    -   **ASR**：採用瀏覽器內置的 **Web Speech API** (`webkitSpeechRecognition`) 進行零記憶體開銷的即時語音轉文字。
+    -   **SLM/LLM**：採用 **WebGPU (MLC WebLLM)** 於瀏覽器沙盒中直接運行量化後的 **Qwen-2.5-0.5B-Instruct** 本地模型。如 WebGPU 不可用，自動降級為台灣排版規則引擎。
+*   **優美前端與注入互動**：
+    -   **Popup 介面** (`popup.html/css/js`)：玻璃擬態暗色質感、Outfits 字型、自訂風格管理與歷史複製剪貼簿。
+    -   **Content 注入** (`content.js/css`)：Alt + S 快捷鍵呼叫半透明懸浮流光 Widget，配有 Pulse 動態呼吸聲波，並使用 DOM Range API 在游標焦點（包含 contenteditable 編輯器）進行實時打字與取代。
+    -   **視覺識別**：使用 `sips` 提取 Option A 圖標裁切生成 16/48/128 像素的 PNG 圖標組。
+
+---
+
 ## 🛠️ 編譯與驗證狀態
 *   **核心庫編譯**：使用 `cargo check` 已確認在 macOS (arm64) 環境下**順利通過編譯，0 錯誤，0 警告**。
 *   **單元測試**：`cargo test` 全數通過。
 *   **各架構 iOS 編譯**：`aarch64-apple-ios`、`x86_64-apple-ios`、`aarch64-apple-ios-sim` 三架構均編譯成功並打包為支援 CoreML 加速的 XCFramework。
+*   **瀏覽器套件狀態**：Chrome Extension 項目初始化完畢，代碼功能完整，已可直接於 `chrome://extensions` 載入 unpacked 資料夾執行。
 *   **版控狀態**：已成功推送（`git push`）至遠端 GitHub 儲存庫：`https://github.com/hauchiehlin-ops/EchoWrite.git` 的 `main` 分支。

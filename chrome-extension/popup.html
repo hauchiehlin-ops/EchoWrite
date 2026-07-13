@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>EchoWrite - Local AI Voice Input</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+TC:wght@300;400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="dark-mode">
+  <div class="glass-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-wrapper">
+        <img src="icons/icon48.png" alt="EchoWrite Logo" class="pulse-logo">
+        <span class="app-name">EchoWrite</span>
+      </div>
+      <div class="badge">WebGPU Local</div>
+    </header>
+
+    <!-- Main Card -->
+    <main class="main-content">
+      <!-- Description / Tip -->
+      <section class="info-section">
+        <p class="shortcut-tip">在網頁輸入框按下 <kbd>Alt</kbd> + <kbd>S</kbd> 開始錄音</p>
+      </section>
+
+      <!-- Style Selection -->
+      <section class="style-section">
+        <h3 class="section-title">語音重組風格偏好</h3>
+        <div class="style-options">
+          <div class="style-card active" data-style="smart">
+            <div class="card-icon">⚡</div>
+            <div class="card-info">
+              <span class="style-name">智慧自動路由</span>
+              <span class="style-desc">偵測語音命令，智慧分析意圖</span>
+            </div>
+          </div>
+          <div class="style-card" data-style="professional">
+            <div class="card-icon">💼</div>
+            <div class="card-info">
+              <span class="style-name">專業繁體公務</span>
+              <span class="style-desc">適合郵件、報告與書面溝通</span>
+            </div>
+          </div>
+          <div class="style-card" data-style="casual">
+            <div class="card-icon">💬</div>
+            <div class="card-info">
+              <span class="style-name">親切助手口語</span>
+              <span class="style-desc">消除口吃、重複，語氣隨和流暢</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Recent History -->
+      <section class="history-section">
+        <h3 class="section-title">最近語音記錄</h3>
+        <div class="history-list" id="historyList">
+          <div class="no-history">尚無記錄，立即在網頁上按下 Alt+S 開始說話！</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <div class="status-indicator">
+        <span class="status-dot green"></span>
+        <span class="status-text" id="statusText">WebGPU 引擎就緒</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
