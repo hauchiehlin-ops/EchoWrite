@@ -27,6 +27,7 @@ lazy_static = "1.4"
 
 # 跨平台語言綁定 (Swift, Kotlin, C#)
 uniffi = { version = "0.28", features = ["cli"] }
+thiserror = "1.0"
 
 [[bin]]
 name = "uniffi-bindgen"
