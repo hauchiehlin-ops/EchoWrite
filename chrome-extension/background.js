@@ -235,7 +235,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // 轉發來自 offscreen.js 的成果到當前 content tab（自動注入 fallback）
     sendToContentTab(message);
   }
-  return true;
+  // 注意：不要在這裡 unconditionally return true，這會導致 Message Channel 懸掛報錯
 });
 
 console.log('EchoWrite: background.js loaded.');

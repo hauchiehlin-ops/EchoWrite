@@ -138,14 +138,8 @@ function startSpeechRecognition() {
     for (let i = 0; i < event.results.length; ++i) {
       const result = event.results[i];
       const transcript = result[0].transcript;
-      const confidence = result[0].confidence;
 
       if (result.isFinal) {
-        // 過濾低信心度的雜訊片段（背景噪音、短促雜音等）
-        if (confidence > 0 && confidence < ASR_CONFIDENCE_THRESHOLD) {
-          console.log(`EchoWrite: 過濾低信心度片段 (${(confidence * 100).toFixed(1)}%): '${transcript}'`);
-          continue;
-        }
         rawTranscript += transcript;
       } else {
         interimTranscript += transcript;
@@ -164,11 +158,16 @@ function startSpeechRecognition() {
   };
 
   recognition.onerror = (event) => {
-    console.error("Speech recognition error: ", event.error);
+    console.error("EchoWrite: Speech recognition error: ", event.error);
     if (event.error === 'not-allowed') {
       chrome.runtime.sendMessage({ target: 'background', type: 'request-mic-permission' });
+      stopRecording(true);
+    } else if (event.error === 'no-speech') {
+      // 忽略 no-speech 錯誤，讓 onend 自動重啟，不要中斷使用者的錄音狀態
+      console.log("EchoWrite: 忽略 no-speech 錯誤，保持錄音狀態...");
+    } else {
+      stopRecording(true);
     }
-    stopRecording(true);
   };
 
   recognition.onend = () => {
