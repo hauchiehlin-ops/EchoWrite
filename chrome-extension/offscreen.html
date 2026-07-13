@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>EchoWrite Offscreen Processor</title>
-  <!-- 引入 MLC WebLLM 引擎，利用 WebGPU 進行本機推理 -->
+  <!-- 引入 offscreen processor - 使用 dynamic import() 確保 web-llm 載入失敗不會阻斷 onMessage 註冊 -->
   <script type="module" src="offscreen.js"></script>
 </head>
 <body>

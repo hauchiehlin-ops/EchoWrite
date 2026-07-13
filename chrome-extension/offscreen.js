@@ -1,5 +1,6 @@
 // EchoWrite Offscreen processor (offscreen.js)
-import * as webllm from "./web-llm.js";
+// NOTE: web-llm is loaded via dynamic import() to prevent module load failures
+// from killing the onMessage listener registration.
 
 let recognition = null;
 let isRecording = false;
@@ -8,6 +9,7 @@ let llmEngine = null;
 let initPromise = null;
 let isProcessingPending = false;
 let latestInterim = "";
+let webllmModule = null;
 
 const SYSTEM_PROMPT = 
   "你是一個極致智慧的台灣語音助理，專門將零碎、雜亂的口語轉寫稿重塑為優雅、邏輯清晰、段落分明的書面文章。請嚴格遵守以下重構規範：\n" +
@@ -16,6 +18,19 @@ const SYSTEM_PROMPT =
   "3. 智慧橋接：自動修正使用者的思考停頓、口吃、改口與贅詞（例如：將『我們明天...呃...那個...兩點開會』自動橋接為『我們明天兩點開會。』）。\n" +
   "4. 在地化規範：使用台灣繁體標點。中英文/數字夾雜時自動加空格。將大陸用語（如：屏幕、內存、軟件）轉換為台灣用語（如：螢幕、記憶體、軟體）。\n" +
   "5. 輸出限制：直接輸出重構後的文本，絕對不可包含 any 你自己的說明、旁白、引言或客套回應。";
+
+// 動態載入 WebLLM 模組（不阻擋核心 ASR 流程）
+async function loadWebLLMModule() {
+  if (webllmModule) return webllmModule;
+  try {
+    webllmModule = await import("./web-llm.js");
+    console.log("EchoWrite: web-llm.js 模組載入成功。");
+    return webllmModule;
+  } catch (err) {
+    console.warn("EchoWrite: web-llm.js 載入失敗，將使用規則排版降級。", err);
+    return null;
+  }
+}
 
 // 初始化 WebGPU MLC 引擎
 async function initWebLLM() {
@@ -28,8 +43,14 @@ async function initWebLLM() {
       return null;
     }
 
+    const mod = await loadWebLLMModule();
+    if (!mod || !mod.MLCEngine) {
+      console.warn("EchoWrite: WebLLM 模組無法使用，降級為規則排版。");
+      return null;
+    }
+
     try {
-      const engine = new webllm.MLCEngine();
+      const engine = new mod.MLCEngine();
       console.log("EchoWrite: 正在載入本地端 Qwen 0.5B 模型...");
       
       // 監聽加載進度
@@ -76,6 +97,7 @@ function startSpeechRecognition() {
   recognition.interimResults = true;
 
   recognition.onstart = () => {
+    console.log("EchoWrite: SpeechRecognition started.");
     chrome.runtime.sendMessage({ target: 'content', type: 'recording-started' });
   };
 
@@ -91,6 +113,8 @@ function startSpeechRecognition() {
       }
     }
     latestInterim = interimTranscript;
+
+    console.log("EchoWrite onresult: final='" + rawTranscript + "' interim='" + interimTranscript + "'");
 
     // 將即時轉寫文字送回頁面（樂觀排版 / 即時回饋）
     chrome.runtime.sendMessage({
@@ -109,6 +133,7 @@ function startSpeechRecognition() {
   };
 
   recognition.onend = () => {
+    console.log("EchoWrite: SpeechRecognition onend. isRecording=" + isRecording + " isProcessingPending=" + isProcessingPending);
     if (isRecording) {
       // 若非手動停止（例如環境太靜音自動中斷），則重新啟動以維持錄音連續性
       try { recognition.start(); } catch (e) {}
@@ -122,9 +147,11 @@ function startSpeechRecognition() {
 }
 
 // 停止錄音
-async function stopRecording(isError = false) {
+function stopRecording(isError = false) {
   if (!isRecording) return;
   isRecording = false;
+
+  console.log("EchoWrite: stopRecording called. isError=" + isError + " rawTranscript='" + rawTranscript + "' latestInterim='" + latestInterim + "'");
 
   chrome.runtime.sendMessage({ target: 'content', type: 'recording-stopped' });
 
@@ -151,6 +178,8 @@ async function processAndSendResult() {
   if (!textToProcess) {
     textToProcess = latestInterim.trim();
   }
+
+  console.log("EchoWrite processAndSendResult: textToProcess='" + textToProcess + "'");
 
   if (!textToProcess) {
     console.log("EchoWrite: 轉寫文本為空，不進行 AI 重組。");
@@ -191,6 +220,8 @@ async function processAndSendResult() {
     // 降級為規則排版
     resultText = fallbackFormat(textToProcess);
   }
+
+  console.log("EchoWrite: 最終輸出文字='" + resultText + "'");
 
   // 3. 透過 background 儲存歷史紀錄
   chrome.runtime.sendMessage({ target: 'background', type: 'save-history', text: resultText });
@@ -234,9 +265,15 @@ function fallbackFormat(text) {
   return formatted;
 }
 
-// 監聽來自 background 的錄音啟動/停止控制
+// ============================================================
+// 訊息監聽器 — 此區塊 **必須** 在全域作用域同步註冊，
+// 不可被任何 import 或 async 操作阻擋！
+// ============================================================
+console.log("EchoWrite: offscreen.js loaded, registering onMessage listener.");
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message.target === 'offscreen') {
+    console.log("EchoWrite offscreen received:", message.type);
     if (message.type === 'toggle-recording') {
       if (isRecording) {
         stopRecording();
