@@ -11,3 +11,6 @@
 /scripts/build
 /scripts/build_win
 
+# xcodegen 產出的專案檔（來源為 ios/project.yml，執行 `xcodegen generate` 重新產生）
+/ios/EchoWrite.xcodeproj
+
