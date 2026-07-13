@@ -106,16 +106,43 @@ function sendToOffscreen(message) {
   });
 }
 
+// 記住使用者觸發錄音時的真實分頁 ID
+let lastActiveTabId = null;
+
+// 找到使用者正在使用的「真實網頁」分頁（跳過 chrome:// 等系統頁面）
+async function findUserTab() {
+  // 優先使用已記錄的分頁
+  if (lastActiveTabId) {
+    try {
+      const tab = await chrome.tabs.get(lastActiveTabId);
+      if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+        return tab;
+      }
+    } catch (e) {
+      // 分頁可能已關閉
+    }
+  }
+
+  // 否則搜尋最近使用的一般網頁分頁
+  const tabs = await chrome.tabs.query({ lastFocusedWindow: true });
+  for (const tab of tabs) {
+    if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('about:') && !tab.url.startsWith('edge://')) {
+      return tab;
+    }
+  }
+  return null;
+}
+
 // 嘗試將訊息送達 content script，若失敗則動態注入後重試
 async function sendToContentTab(message) {
-  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tabs[0]) {
-    console.warn('EchoWrite: No active tab found!');
+  const tab = await findUserTab();
+  if (!tab) {
+    console.warn('EchoWrite: No suitable tab found (all tabs are chrome:// or system pages).');
     return;
   }
 
-  const tabId = tabs[0].id;
-  console.log('EchoWrite: Forwarding to content tab:', message.type, 'tabId=' + tabId);
+  const tabId = tab.id;
+  console.log('EchoWrite: Forwarding to content tab:', message.type, 'tabId=' + tabId, 'url=' + (tab.url || '').substring(0, 60));
 
   try {
     await chrome.tabs.sendMessage(tabId, message);
@@ -144,6 +171,15 @@ async function sendToContentTab(message) {
 chrome.commands.onCommand.addListener(async (command) => {
   console.log('EchoWrite: Command received:', command);
   if (command === 'toggle-recording') {
+    // 記住使用者觸發時的活動分頁（可能是普通網頁）
+    try {
+      const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (tabs[0] && tabs[0].url && !tabs[0].url.startsWith('chrome://')) {
+        lastActiveTabId = tabs[0].id;
+        console.log('EchoWrite: Stored active tab:', lastActiveTabId, tabs[0].url?.substring(0, 60));
+      }
+    } catch (e) {}
+
     const success = await setupOffscreen();
     console.log('EchoWrite: setupOffscreen result:', success);
     if (success) {
