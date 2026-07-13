@@ -1,5 +1,5 @@
 // EchoWrite Offscreen processor (offscreen.js)
-import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+import * as webllm from "./web-llm.js";
 
 let recognition = null;
 let isRecording = false;

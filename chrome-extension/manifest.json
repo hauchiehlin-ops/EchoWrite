@@ -13,6 +13,9 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; font-src 'self' https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
