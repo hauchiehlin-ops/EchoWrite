@@ -77,7 +77,7 @@ async function initWebLLM() {
       // 取得使用者選擇的模型
       const modelName = await new Promise((resolve) => {
         chrome.runtime.sendMessage({ target: 'background', type: 'get-model' }, (response) => {
-          resolve(response?.model || 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC');
+          resolve(response?.model || 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC');
         });
       });
 
@@ -245,10 +245,12 @@ async function processAndSendResult() {
         { role: "user", content: `[風格偏好: ${style}] 請優化以下逐字稿：\n${textToProcess}` }
       ];
 
-      const reply = await engine.chat.completions.create({
-        messages: messages,
-        temperature: 0.3
-      });
+      // 加入超時保護，避免 WebGPU worker 崩潰導致永遠卡住
+      const reply = await Promise.race([
+        engine.chat.completions.create({ messages: messages, temperature: 0.3 }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("AI 推理超時 (WebGPU 可能已崩潰)")), 15000))
+      ]);
+      
       resultText = reply.choices[0].message.content;
     } catch (err) {
       console.error("WebLLM 推理失敗，降級為規則排版", err);

@@ -218,7 +218,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true; // 異步回應
     } else if (message.type === 'get-model') {
       chrome.storage.local.get(['selectedModel'], (data) => {
-        sendResponse({ model: data.selectedModel || 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC' });
+        sendResponse({ model: data.selectedModel || 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC' });
       });
       return true; // 異步回應
     } else if (message.type === 'model-changed') {
