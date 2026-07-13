@@ -92,7 +92,16 @@
 
 ---
 
+### 7. iOS 編譯實測與 UniFFI 偵錯紀錄
+*   **靜態庫輸出設定**：於 `core/Cargo.toml` 將 `crate-type` 修改為 `["lib", "staticlib", "cdylib"]`，確保編譯產出 Xcode 連結所需的 `.a` 靜態庫。
+*   **解決連接器錯誤 (`___chkstk_darwin`)**：為解決編譯 iOS 對象時編譯器未定義系統函數的問題，在 `build_ios.sh` 匯出 `IPHONEOS_DEPLOYMENT_TARGET=17.0` 與 `MACOSX_DEPLOYMENT_TARGET=14.0`，使 Linker 對齊高版本 SDK 成功編譯。
+*   **UniFFI 自訂錯誤重構**：原 Result 回傳 `String` 導致 UniFFI 生成器 panic。於 `core/src/lib.rs` 引入 `thiserror` 並宣告 `EchoWriteError` 列舉以取代 raw String 報錯。
+*   **實測成果**：實測執行 `./build_ios.sh`，成功於 `/ios` 目錄生成本機 **`EchoWriteCore.xcframework`** (154MB，已於 `.gitignore` 排除防止上傳) 以及 **`echowrite_core.swift`** 綁定介面 (已成功 push 至 GitHub)。
+
+---
+
 ## 🛠️ 編譯與驗證狀態
 *   **核心庫編譯**：使用 `cargo check` 已確認在 macOS (arm64) 環境下**順利通過編譯，0 錯誤，0 警告**。
 *   **單元測試**：`cargo test` 全數通過。
+*   **各架構 iOS 編譯**：`aarch64-apple-ios`、`x86_64-apple-ios`、`aarch64-apple-ios-sim` 三架構均編譯成功並打包為 XCFramework。
 *   **版控狀態**：已成功推送（`git push`）至遠端 GitHub 儲存庫：`https://github.com/hauchiehlin-ops/EchoWrite.git` 的 `main` 分支。
