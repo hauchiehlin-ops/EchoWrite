@@ -10,9 +10,13 @@ let initPromise = null;
 let isProcessingPending = false;
 let latestInterim = "";
 let webllmModule = null;
+let micPermissionPromptOpen = false;
+let autoFinalizeTimer = null;
+let hasSpeechResult = false;
 
 // ASR 信心度門檻：低於此值的辨識結果將被過濾（0.0 ~ 1.0）
 const ASR_CONFIDENCE_THRESHOLD = 0.4;
+const AUTO_FINALIZE_AFTER_SILENCE_MS = 1200;
 
 const SYSTEM_PROMPT = [
   "你是一個極致精準的台灣繁體中文語音轉文字助理。你的唯一任務是將語音辨識產出的零碎口語逐字稿，重塑為正確、流暢、段落分明的書面中文。",
@@ -108,18 +112,78 @@ async function initWebLLM() {
 }
 
 // 啟動 Speech Recognition
-function startSpeechRecognition() {
+async function ensureMicrophoneAccess() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    console.warn("EchoWrite: navigator.mediaDevices.getUserMedia 不可用，仍嘗試啟動 Web Speech API。");
+    return true;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((track) => track.stop());
+    return true;
+  } catch (err) {
+    const message = err?.message || String(err);
+    console.warn("EchoWrite: 麥克風授權檢查失敗，將開啟授權頁。", err?.name || "", message);
+    requestMicrophonePermission();
+    return false;
+  }
+}
+
+function requestMicrophonePermission() {
+  if (micPermissionPromptOpen) return;
+  micPermissionPromptOpen = true;
+
+  chrome.runtime.sendMessage({ target: 'background', type: 'request-mic-permission' });
+  chrome.runtime.sendMessage({ target: 'content', type: 'processing-finished', text: "" });
+
+  setTimeout(() => {
+    micPermissionPromptOpen = false;
+  }, 5000);
+}
+
+function clearAutoFinalizeTimer() {
+  if (autoFinalizeTimer) {
+    clearTimeout(autoFinalizeTimer);
+    autoFinalizeTimer = null;
+  }
+}
+
+function scheduleAutoFinalize() {
+  clearAutoFinalizeTimer();
+  const textToProcess = (rawTranscript + latestInterim).trim();
+  if (!textToProcess) return;
+
+  autoFinalizeTimer = setTimeout(() => {
+    autoFinalizeTimer = null;
+    if (isRecording && (rawTranscript + latestInterim).trim()) {
+      console.log("EchoWrite: Auto-finalizing after speech pause.");
+      stopRecording();
+    }
+  }, AUTO_FINALIZE_AFTER_SILENCE_MS);
+}
+
+async function startSpeechRecognition() {
   if (isRecording) return;
-  isRecording = true;
-  rawTranscript = "";
-  latestInterim = "";
-  isProcessingPending = false;
+
+  const hasMicAccess = await ensureMicrophoneAccess();
+  if (!hasMicAccess) {
+    isRecording = false;
+    return false;
+  }
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
     console.error("EchoWrite: 瀏覽器不支援 Web Speech API");
-    return;
+    return false;
   }
+
+  isRecording = true;
+  rawTranscript = "";
+  latestInterim = "";
+  isProcessingPending = false;
+  hasSpeechResult = false;
+  clearAutoFinalizeTimer();
 
   recognition = new SpeechRecognition();
   recognition.lang = 'zh-TW';
@@ -133,11 +197,10 @@ function startSpeechRecognition() {
 
   recognition.onresult = (event) => {
     let interimTranscript = "";
-    rawTranscript = "";
 
-    for (let i = 0; i < event.results.length; ++i) {
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
       const result = event.results[i];
-      const transcript = result[0].transcript;
+      const transcript = result[0]?.transcript || "";
 
       if (result.isFinal) {
         rawTranscript += transcript;
@@ -150,21 +213,29 @@ function startSpeechRecognition() {
     console.log("EchoWrite onresult: final='" + rawTranscript + "' interim='" + interimTranscript + "'");
 
     // 將即時轉寫文字送回頁面（樂觀排版 / 即時回饋）
+    const visibleTranscript = rawTranscript + interimTranscript;
+    if (visibleTranscript.trim()) {
+      hasSpeechResult = true;
+      scheduleAutoFinalize();
+    }
     chrome.runtime.sendMessage({
       target: 'content',
       type: 'interim-result',
-      text: rawTranscript + interimTranscript
+      text: visibleTranscript
     });
   };
 
   recognition.onerror = (event) => {
-    console.error("EchoWrite: Speech recognition error: ", event.error);
     if (event.error === 'not-allowed') {
-      chrome.runtime.sendMessage({ target: 'background', type: 'request-mic-permission' });
+      console.warn("EchoWrite: Speech recognition needs microphone permission.");
+      requestMicrophonePermission();
       stopRecording(true);
     } else if (event.error === 'no-speech') {
       // 忽略 no-speech 錯誤，讓 onend 自動重啟，不要中斷使用者的錄音狀態
       console.log("EchoWrite: 忽略 no-speech 錯誤，保持錄音狀態...");
+      if (hasSpeechResult) {
+        scheduleAutoFinalize();
+      }
     } else {
       stopRecording(true);
     }
@@ -182,6 +253,7 @@ function startSpeechRecognition() {
   };
 
   recognition.start();
+  return true;
 }
 
 // 取消錄音：捨棄已轉寫的文字，不觸發 AI 重組，也不寫入歷史紀錄。
@@ -191,6 +263,8 @@ function cancelRecording() {
   isProcessingPending = false;
   rawTranscript = "";
   latestInterim = "";
+  hasSpeechResult = false;
+  clearAutoFinalizeTimer();
 
   console.log("EchoWrite: cancelRecording called, discarding transcript.");
 
@@ -205,6 +279,7 @@ function cancelRecording() {
 function stopRecording(isError = false) {
   if (!isRecording) return;
   isRecording = false;
+  clearAutoFinalizeTimer();
 
   console.log("EchoWrite: stopRecording called. isError=" + isError + " rawTranscript='" + rawTranscript + "' latestInterim='" + latestInterim + "'");
 
@@ -242,10 +317,7 @@ async function consumeStreamAndReport(chunkStream) {
 
 // 處理並發送重組潤飾結果
 async function processAndSendResult() {
-  let textToProcess = rawTranscript.trim();
-  if (!textToProcess) {
-    textToProcess = latestInterim.trim();
-  }
+  const textToProcess = (rawTranscript + latestInterim).trim();
 
   console.log("EchoWrite processAndSendResult: textToProcess='" + textToProcess + "'");
 
@@ -297,6 +369,8 @@ async function processAndSendResult() {
     resultText = fallbackFormat(textToProcess);
   }
 
+  resultText = ensureReadablePunctuation(resultText || textToProcess);
+
   console.log("EchoWrite: 最終輸出文字='" + resultText + "'");
 
   // 3. 透過 background 儲存歷史紀錄
@@ -338,7 +412,81 @@ function fallbackFormat(text) {
   formatted = formatted.replace(/([\u4e00-\u9fa5])([A-Za-z0-9])/g, "$1 $2");
   formatted = formatted.replace(/([A-Za-z0-9])([\u4e00-\u9fa5])/g, "$1 $2");
 
+  return ensureReadablePunctuation(formatted);
+}
+
+function ensureReadablePunctuation(text) {
+  if (!text) return "";
+
+  let formatted = text
+    .replace(/\s+/g, " ")
+    .replace(/\s*([，。！？、：；])\s*/g, "$1")
+    .trim();
+
+  if (!formatted) return "";
+
+  formatted = formatted
+    .replace(/([嗎呢])(?=[\u4e00-\u9fa5A-Za-z0-9])/g, "$1？")
+    .replace(/(為什麼|怎麼|可不可以|能不能|是不是|會不會)(?=[\u4e00-\u9fa5A-Za-z0-9])/g, "$1")
+    .replace(/吧(?=(你|我|他|她|它|這|那|看來|為什麼|怎麼|可|不|但|所以|然後))/g, "吧。")
+    .replace(/(看來|不過|但是|可是|所以|然後|另外|接著|那)(?=[\u4e00-\u9fa5A-Za-z0-9])/g, "，$1")
+    .replace(/([\u4e00-\u9fa5])([A-Za-z0-9])/g, "$1 $2")
+    .replace(/([A-Za-z0-9])([\u4e00-\u9fa5])/g, "$1 $2")
+    .replace(/^，/, "");
+
+  const clauses = splitLongUnpunctuatedClauses(formatted);
+  formatted = clauses
+    .map((clause) => punctuateClause(clause))
+    .join("")
+    .replace(/([。！？])([，、；：])/g, "$1")
+    .replace(/，([。！？])/g, "$1")
+    .replace(/([。！？])(?=[\u4e00-\u9fa5A-Za-z0-9])/g, "$1\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
   return formatted;
+}
+
+function splitLongUnpunctuatedClauses(text) {
+  const parts = text.split(/([，。！？；：\n])/);
+  const clauses = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const body = parts[i] || "";
+    const punct = parts[i + 1] || "";
+    if (!body) {
+      if (punct && clauses.length) clauses[clauses.length - 1] += punct;
+      continue;
+    }
+
+    if (body.length <= 32 || punct) {
+      clauses.push(body + punct);
+      continue;
+    }
+
+    const chunks = body.split(/(?=(?:那|但是|可是|不過|所以|然後|另外|接著|看來|你為什麼|我覺得|如果))/g)
+      .filter(Boolean);
+    if (chunks.length <= 1) {
+      clauses.push(body + punct);
+    } else {
+      chunks.forEach((chunk, index) => {
+        clauses.push(chunk + (index === chunks.length - 1 ? punct : "，"));
+      });
+    }
+  }
+  return clauses;
+}
+
+function punctuateClause(clause) {
+  if (!clause) return "";
+  if (/[。！？；：\n]$/.test(clause)) return clause;
+  if (/[，、]$/.test(clause)) return clause;
+  if (/(嗎|呢|為什麼|怎麼|可不可以|能不能|是不是|會不會)$/.test(clause)) {
+    return clause + "？";
+  }
+  if (clause.length >= 18) {
+    return clause + "。";
+  }
+  return clause;
 }
 
 // ============================================================
@@ -354,8 +502,9 @@ chrome.runtime.onMessage.addListener((message) => {
       if (isRecording) {
         stopRecording();
       } else {
-        startSpeechRecognition();
-        initWebLLM(); // 背景默默熱加載 WebLLM
+        startSpeechRecognition().then((started) => {
+          if (started !== false) initWebLLM(); // 背景默默熱加載 WebLLM
+        });
       }
     } else if (message.type === 'start-recording') {
       startSpeechRecognition();

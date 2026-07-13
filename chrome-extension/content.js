@@ -2,6 +2,7 @@
 
 let activeElement = null;
 let widgetEl = null;
+let floatingButtonEl = null;
 let originalValue = "";
 let originalPlaceholder = "";
 let isCurrentlyRecording = false;
@@ -12,15 +13,58 @@ let recordingStartedAt = 0;
 // 記錄目前已插入的「草稿文字」所在區間，讓後續更新能整段替換而非不斷疊加。
 let draftStart = -1;
 let draftLength = 0;
+let extensionContextValid = true;
+
+function isExtensionContextValid() {
+  try {
+    return Boolean(chrome?.runtime?.id);
+  } catch (_) {
+    return false;
+  }
+}
+
+function handleInvalidExtensionContext() {
+  extensionContextValid = false;
+  isCurrentlyRecording = false;
+  stopDurationTimer();
+  endOptimisticDraft();
+  if (widgetEl) {
+    updateWidgetText("EchoWrite 已重新載入，請重新整理此頁後再使用快捷鍵。");
+    setWaveState('idle');
+  }
+  updateFloatingButtonState('stale');
+}
+
+function sendRuntimeMessage(message) {
+  if (!extensionContextValid || !isExtensionContextValid()) {
+    handleInvalidExtensionContext();
+    return;
+  }
+
+  try {
+    const response = chrome.runtime.sendMessage(message);
+    if (response && typeof response.catch === 'function') {
+      response.catch(() => {
+        handleInvalidExtensionContext();
+      });
+    }
+  } catch (_) {
+    handleInvalidExtensionContext();
+  }
+}
 
 // 監聽鍵盤 Alt + S 快捷鍵 (如果 commands 失敗時的備用)
 window.addEventListener('keydown', (e) => {
-  if (e.altKey && (e.key === 's' || e.key === 'S')) {
+  const isLegacyShortcut = e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyS';
+  const isCommandShortcut = e.shiftKey && e.code === 'KeyE' && (e.metaKey || e.ctrlKey) && !e.altKey;
+  const isToggleShortcut = isLegacyShortcut || isCommandShortcut;
+  if (isToggleShortcut && !e.repeat) {
     e.preventDefault();
+    e.stopPropagation();
     // 取得當前聚焦元素
     activeElement = document.activeElement;
     // 請求背景 Service Worker 開啟/關閉錄音
-    chrome.runtime.sendMessage({ target: 'background', type: 'toggle-recording' });
+    sendRuntimeMessage({ target: 'background', type: 'toggle-recording' });
     return;
   }
 
@@ -32,7 +76,50 @@ window.addEventListener('keydown', (e) => {
 });
 
 function cancelRecording() {
-  chrome.runtime.sendMessage({ target: 'background', type: 'cancel-recording-request' });
+  sendRuntimeMessage({ target: 'background', type: 'cancel-recording-request' });
+}
+
+function toggleRecordingFromFloatingButton() {
+  const current = document.activeElement;
+  if (current && current !== floatingButtonEl && !floatingButtonEl?.contains(current)) {
+    activeElement = current;
+  }
+  sendRuntimeMessage({ target: 'background', type: 'toggle-recording' });
+}
+
+function initFloatingButton() {
+  if (floatingButtonEl || !document.body || !isExtensionContextValid()) return;
+
+  floatingButtonEl = document.createElement('button');
+  floatingButtonEl.id = 'echowrite-floating-button';
+  floatingButtonEl.type = 'button';
+  floatingButtonEl.title = 'EchoWrite 語音輸入';
+  floatingButtonEl.setAttribute('aria-label', '開啟或關閉 EchoWrite 語音輸入');
+  floatingButtonEl.innerHTML = `
+    <img class="ew-floating-icon" src="${chrome.runtime.getURL('assets/echowrite-floating-icon.png')}" alt="" />
+    <span class="ew-floating-ring"></span>
+  `;
+  floatingButtonEl.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+  });
+  floatingButtonEl.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleRecordingFromFloatingButton();
+  });
+
+  document.body.appendChild(floatingButtonEl);
+}
+
+function updateFloatingButtonState(state) {
+  if (!floatingButtonEl) return;
+  floatingButtonEl.dataset.state = state;
+}
+
+if (document.body) {
+  initFloatingButton();
+} else {
+  document.addEventListener('DOMContentLoaded', initFloatingButton, { once: true });
 }
 
 function startDurationTimer() {
@@ -59,12 +146,17 @@ function updateDurationDisplay() {
 }
 
 // 監聽來自 background.js 的事件 (來自 offscreen)
+try {
+if (isExtensionContextValid()) {
 chrome.runtime.onMessage.addListener((message) => {
   if (message.target === 'content') {
     switch (message.type) {
       case 'recording-started':
-        activeElement = document.activeElement;
+        if (!activeElement || activeElement === floatingButtonEl || floatingButtonEl?.contains(activeElement)) {
+          activeElement = document.activeElement;
+        }
         isCurrentlyRecording = true;
+        updateFloatingButtonState('recording');
         showWidget();
         updateWidgetText("🎤 正在聆聽，請開始說話...");
         setWaveState('recording');
@@ -80,6 +172,7 @@ chrome.runtime.onMessage.addListener((message) => {
 
       case 'recording-stopped':
         isCurrentlyRecording = false;
+        updateFloatingButtonState('processing');
         stopDurationTimer();
         updateWidgetText("🧠 錄音結束，正在呼叫本地 WebGPU 進行重組潤飾...");
         setWaveState('processing');
@@ -88,6 +181,7 @@ chrome.runtime.onMessage.addListener((message) => {
       case 'recording-cancelled':
         // 使用者主動取消：捨棄轉寫內容，不插入任何文字，並清除已樂觀打入的草稿
         isCurrentlyRecording = false;
+        updateFloatingButtonState('idle');
         stopDurationTimer();
         applyDraftText("");
         endOptimisticDraft();
@@ -112,6 +206,7 @@ chrome.runtime.onMessage.addListener((message) => {
       case 'processing-finished':
         // 最終成果輸出
         isCurrentlyRecording = false;
+        updateFloatingButtonState('idle');
         stopDurationTimer();
         if (isDraftTarget()) {
           // 標準輸入框已經邊生成邊打字，這裡只需要把草稿收斂為最終版本
@@ -126,6 +221,10 @@ chrome.runtime.onMessage.addListener((message) => {
     }
   }
 });
+}
+} catch (_) {
+  handleInvalidExtensionContext();
+}
 
 // 建立美麗的懸浮 UI Widget
 function showWidget() {
@@ -142,7 +241,7 @@ function showWidget() {
           <span class="ew-duration" id="ewDuration">00:00</span>
         </div>
         <div class="ew-header-actions">
-          <span class="ew-shortcut">Esc 取消 · Alt+S 停止</span>
+          <span class="ew-shortcut">Esc 取消 · Cmd+Shift+E 停止</span>
           <button type="button" class="ew-cancel-btn" id="ewCancelBtn" title="取消錄音（不會輸入任何文字）">✕</button>
         </div>
       </div>

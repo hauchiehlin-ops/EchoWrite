@@ -200,10 +200,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target === 'background') {
     if (message.type === 'toggle-recording') {
       console.log('EchoWrite: toggle-recording from content.js');
+      if (sender.tab?.id) {
+        lastActiveTabId = sender.tab.id;
+        console.log('EchoWrite: Stored sender tab:', lastActiveTabId, sender.tab.url?.substring(0, 60));
+      }
       setupOffscreen().then((success) => {
         if (success) sendToOffscreen({ target: 'offscreen', type: 'toggle-recording' });
       });
     } else if (message.type === 'start-recording-request') {
+      if (sender.tab?.id) {
+        lastActiveTabId = sender.tab.id;
+      }
       setupOffscreen().then((success) => {
         if (success) sendToOffscreen({ target: 'offscreen', type: 'start-recording' });
       });

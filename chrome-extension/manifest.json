@@ -10,6 +10,9 @@
     "scripting",
     "offscreen"
   ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -31,11 +34,19 @@
       "css": ["content.css"]
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "assets/echowrite-floating-icon.png"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "commands": {
     "toggle-recording": {
       "suggested_key": {
-        "default": "Alt+S",
-        "mac": "Alt+S"
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
       },
       "description": "開啟或關閉語音錄音"
     }
