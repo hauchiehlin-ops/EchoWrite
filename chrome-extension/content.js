@@ -124,24 +124,35 @@ function insertTextIntoElement(text) {
   }
   if (!target || !text) return;
 
+  // 確保目標元素擁有焦點
+  target.focus();
+
+  // 優先使用 execCommand('insertText') — 這會模擬真實使用者打字，
+  // 觸發所有原生瀏覽器事件（input, change, compositionend 等），
+  // 確保 React / Vue / Angular / Google 等所有前端框架都能正確感知。
+  const success = document.execCommand('insertText', false, text);
+
+  if (success) {
+    return; // 成功！所有事件均已被瀏覽器自動觸發
+  }
+
+  // ========== Fallback：execCommand 不支援時手動處理 ==========
+
   // 1. 如果是標準 Input 或 Textarea
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
     const start = target.selectionStart;
     const end = target.selectionEnd;
     const val = target.value;
     
-    // 插入文字到游標所在位置
     target.value = val.substring(0, start) + text + val.substring(end);
-    
-    // 將游標位置移動到新輸入文字後面
     target.selectionStart = target.selectionEnd = start + text.length;
     
-    // 觸發 Input 事件讓前端 Framework (React/Vue) 感知到內容變更
-    target.dispatchEvent(new Event('input', { bubbles: true }));
+    // 觸發多種事件以最大化框架相容性
+    target.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+    target.dispatchEvent(new Event('change', { bubbles: true }));
   } 
   // 2. 如果是富文本編輯框 (如 Notion, Slack 編輯框 contenteditable)
   else if (target.getAttribute('contenteditable') === 'true' || target.isContentEditable) {
-    target.focus();
     const selection = window.getSelection();
     if (selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
@@ -149,14 +160,12 @@ function insertTextIntoElement(text) {
       const textNode = document.createTextNode(text);
       range.insertNode(textNode);
       
-      // 移動游標
       range.setStartAfter(textNode);
       range.setEndAfter(textNode);
       selection.removeAllRanges();
       selection.addRange(range);
       
-      // 觸發事件
-      target.dispatchEvent(new Event('input', { bubbles: true }));
+      target.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
     }
   }
 }
