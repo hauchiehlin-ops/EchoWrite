@@ -288,3 +288,9 @@ chrome.runtime.onMessage.addListener((message) => {
     }
   }
 });
+
+// 通知 background.js：offscreen 已就緒，可以安全接收訊息
+chrome.runtime.sendMessage({ target: 'background', type: 'offscreen-ready' }).catch(() => {
+  // 如果 background 尚未就緒（極罕見），靜默忽略
+});
+console.log("EchoWrite: offscreen-ready signal sent.");
