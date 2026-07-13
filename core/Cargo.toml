@@ -6,10 +6,11 @@ edition = "2021"
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 
-[dependencies]
-# 語音轉文字 (ASR)
-whisper-rs = { version = "0.15" }
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
 
+[dependencies]
 # 本地 LLM (SLM) 推理
 llama-cpp-2 = { version = "0.1" }
 
@@ -21,6 +22,7 @@ dirs-next = "2.0"
 hound = "3.5"
 encoding_rs = "0.8"
 cpal = "0.15"
+
 # 靜音檢測與正則/格式化
 regex = "1.10"
 lazy_static = "1.4"
@@ -29,10 +31,13 @@ lazy_static = "1.4"
 uniffi = { version = "0.28", features = ["cli"] }
 thiserror = "1.0"
 
-[[bin]]
-name = "uniffi-bindgen"
-path = "src/bin/uniffi-bindgen.rs"
-
 tokio = { version = "1.38", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# 依不同平台載入 whisper-rs (Apple 平台啟用 coreml 加速)
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+whisper-rs = { version = "0.15", features = ["coreml"] }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+whisper-rs = { version = "0.15" }
