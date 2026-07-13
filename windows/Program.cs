@@ -74,7 +74,13 @@ namespace EchoWrite
 
         private static void StartRecording()
         {
-            start_recording();
+            int result = start_recording();
+            if (result != 0)
+            {
+                _trayIcon.ShowBalloonTip(3000, "EchoWrite 錄音錯誤", "無法啟動錄音，請確定麥克風裝置已連接，且已在 Windows 「隱私權設定」中核准麥克風權限。", ToolTipIcon.Error);
+                Console.WriteLine("Windows: Failed to start recording. Error code: " + result);
+                return;
+            }
             _isRecording = true;
             _trayIcon.Text = "EchoWrite - 錄音中 (按 Alt + S 停止)...";
             Console.WriteLine("Windows: Recording started...");

@@ -49,11 +49,43 @@ class KeyboardViewController: UIInputViewController {
         if isRecording {
             stopRecordingAndProcess()
         } else {
-            startRecording()
+            checkPermissionAndStart()
         }
     }
     
+    func checkPermissionAndStart() {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        if status == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                if granted {
+                    DispatchQueue.main.async {
+                        self.startRecording()
+                    }
+                }
+            }
+            return
+        } else if status == .denied || status == .restricted {
+            recordButton.setTitle("❌ 請至系統設定啟用麥克風", for: .normal)
+            recordButton.backgroundColor = .systemOrange
+            return
+        }
+        
+        startRecording()
+    }
+    
     func startRecording() {
+        // 設定並啟用 iOS AVAudioSession，開啟錄音硬體通道
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker])
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            print("iOS Keyboard: Failed to setup AVAudioSession: \(error)")
+            recordButton.setTitle("❌ 音訊初始化失敗", for: .normal)
+            recordButton.backgroundColor = .systemOrange
+            return
+        }
+        
         isRecording = true
         recordButton.setTitle("🔴 錄音中 (再按一下完成)", for: .normal)
         recordButton.backgroundColor = .systemRed
@@ -80,6 +112,9 @@ class KeyboardViewController: UIInputViewController {
             try audioEngine?.start()
         } catch {
             print("iOS Keyboard: Failed to start AVAudioEngine: \(error)")
+            recordButton.setTitle("❌ 錄音啟動失敗", for: .normal)
+            recordButton.backgroundColor = .systemOrange
+            isRecording = false
         }
     }
     

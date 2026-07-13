@@ -56,6 +56,12 @@ class EchoWriteIME : InputMethodService() {
     }
 
     private fun startRecording() {
+        // Android 運行期權限檢查
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            recordButton?.text = "❌ 請啟用麥克風權限"
+            return
+        }
+
         isRecording = true
         recordButton?.text = "🔴 錄音中 (點擊完成)..."
         
@@ -65,15 +71,27 @@ class EchoWriteIME : InputMethodService() {
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
 
-        audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            sampleRate,
-            channelConfig,
-            audioFormat,
-            bufferSize
-        )
+        try {
+            audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                channelConfig,
+                audioFormat,
+                bufferSize
+            )
 
-        audioRecord?.startRecording()
+            audioRecord?.startRecording()
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+            recordButton?.text = "❌ 權限不足，請授權"
+            isRecording = false
+            return
+        } catch (e: Exception) {
+            e.printStackTrace()
+            recordButton?.text = "❌ 錄音啟動失敗"
+            isRecording = false
+            return
+        }
 
         // 啟動背景線程將 PCM 數據寫入 WAV 檔案
         thread {

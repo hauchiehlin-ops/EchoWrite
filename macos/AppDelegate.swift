@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import AVFoundation
 
 @main
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -47,6 +48,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func startRecording() {
+        // 檢查 Mac 系統麥克風授權狀態
+        let authStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        if authStatus == .denied || authStatus == .restricted {
+            print("EchoWrite: Microphone permission denied.")
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "麥克風授權已被禁用"
+                alert.informativeText = "請至 Mac 「系統設定 > 隱私權與安全性 > 麥克風」勾選並啟用 EchoWrite 的存取權限，以啟用本地端語音重組輸入。"
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "確定")
+                alert.runModal()
+            }
+            return
+        } else if authStatus == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                if granted {
+                    DispatchQueue.main.async {
+                        self.startRecording()
+                    }
+                }
+            }
+            return
+        }
+
         do {
             try echowrite_core.startRecording()
             isRecording = true
