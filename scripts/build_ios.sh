@@ -34,7 +34,7 @@ lipo -create \
 
 # 4. 生成 Swift UniFFI 語言綁定界面 (Swift classes & headers)
 echo "--- 正在生成 Swift 語言綁定接口 (UniFFI Bindings) ---"
-cargo run --features=uniffi/cli --bin uniffi-bindgen generate \
+cargo run --manifest-path ../core/Cargo.toml --features=uniffi/cli --bin uniffi-bindgen generate \
   ../core/src/lib.rs --language swift --out-dir build/bindings
 
 # 5. 複製生成的 C header 與 modulemap 到裝置與模擬器資料夾，以便 XCode 連結
