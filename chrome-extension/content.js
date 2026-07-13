@@ -117,26 +117,31 @@ function setWaveState(state) {
 
 // 將文字打入當前網頁輸入焦點元素
 function insertTextIntoElement(text) {
-  if (!activeElement || !text) return;
+  // 優先使用啟動時捕獲的元素，若為空或 body 則降級為目前聚焦的 activeElement
+  let target = activeElement;
+  if (!target || target === document.body) {
+    target = document.activeElement;
+  }
+  if (!target || !text) return;
 
   // 1. 如果是標準 Input 或 Textarea
-  if (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA') {
-    const start = activeElement.selectionStart;
-    const end = activeElement.selectionEnd;
-    const val = activeElement.value;
+  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const val = target.value;
     
     // 插入文字到游標所在位置
-    activeElement.value = val.substring(0, start) + text + val.substring(end);
+    target.value = val.substring(0, start) + text + val.substring(end);
     
     // 將游標位置移動到新輸入文字後面
-    activeElement.selectionStart = activeElement.selectionEnd = start + text.length;
+    target.selectionStart = target.selectionEnd = start + text.length;
     
     // 觸發 Input 事件讓前端 Framework (React/Vue) 感知到內容變更
-    activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+    target.dispatchEvent(new Event('input', { bubbles: true }));
   } 
   // 2. 如果是富文本編輯框 (如 Notion, Slack 編輯框 contenteditable)
-  else if (activeElement.getAttribute('contenteditable') === 'true' || activeElement.isContentEditable) {
-    activeElement.focus();
+  else if (target.getAttribute('contenteditable') === 'true' || target.isContentEditable) {
+    target.focus();
     const selection = window.getSelection();
     if (selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
@@ -151,7 +156,7 @@ function insertTextIntoElement(text) {
       selection.addRange(range);
       
       // 觸發事件
-      activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+      target.dispatchEvent(new Event('input', { bubbles: true }));
     }
   }
 }
