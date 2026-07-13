@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+.DS_Store
+*.wav
+*.bin
+*.gguf
+*.db
+*.log
+.typeless/
