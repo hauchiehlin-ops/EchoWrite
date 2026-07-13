@@ -2,21 +2,36 @@
 
 // 建立或取得 Offscreen Document
 async function setupOffscreen() {
-  const existingContexts = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT']
-  });
+  let hasExisting = false;
+  try {
+    const existingContexts = await chrome.runtime.getContexts({
+      contextTypes: ['OFFSCREEN_DOCUMENT']
+    });
+    hasExisting = existingContexts.length > 0;
+  } catch (e) {
+    // 降級處理：若 chrome.runtime.getContexts 不存在（例如舊版 Chrome），改用全域狀態捕獲
+    console.log('EchoWrite: chrome.runtime.getContexts is not supported in this version. Falling back to create try-catch.');
+  }
 
-  if (existingContexts.length > 0) {
+  if (hasExisting) {
     return;
   }
 
-  // 建立 Offscreen 視窗以允許麥克風錄音與 WebGPU 本地推理
-  await chrome.offscreen.createDocument({
-    url: 'offscreen.html',
-    reasons: ['AUDIO_PLAYBACK', 'USER_MEDIA'], // 用於音訊錄製與語音辨識
-    justification: 'EchoWrite needs microphone access and DOM APIs to record audio and run local WebGPU LLM.'
-  });
-  console.log('EchoWrite: Offscreen document created.');
+  try {
+    // 建立 Offscreen 視窗以允許麥克風錄音與 WebGPU 本地推理
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['AUDIO_PLAYBACK', 'USER_MEDIA'], // 用於音訊錄製與語音辨識
+      justification: 'EchoWrite needs microphone access and DOM APIs to record audio and run local WebGPU LLM.'
+    });
+    console.log('EchoWrite: Offscreen document created.');
+  } catch (err) {
+    if (err.message && err.message.includes('Only a single offscreen document')) {
+      console.log('EchoWrite: Offscreen document already exists.');
+    } else {
+      console.error('EchoWrite: Failed to create offscreen document:', err);
+    }
+  }
 }
 
 // 監聽全域快捷鍵 Alt + S
