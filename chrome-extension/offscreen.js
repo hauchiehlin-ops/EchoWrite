@@ -122,9 +122,12 @@ async function stopRecording(isError = false) {
     return;
   }
 
-  // 1. 取得使用者偏好風格
-  const data = await chrome.storage.local.get(['selectedStyle']);
-  const style = data.selectedStyle || 'smart';
+  // 1. 透過 background 取得使用者偏好風格
+  const style = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ target: 'background', type: 'get-style' }, (response) => {
+      resolve(response?.style || 'smart');
+    });
+  });
 
   // 2. 進行 AI 重組潤飾
   chrome.runtime.sendMessage({ target: 'content', type: 'processing-started' });
@@ -153,11 +156,8 @@ async function stopRecording(isError = false) {
     resultText = fallbackFormat(rawTranscript);
   }
 
-  // 3. 儲存歷史紀錄
-  const historyData = await chrome.storage.local.get(['history']);
-  const history = historyData.history || [];
-  history.unshift(resultText);
-  await chrome.storage.local.set({ history: history.slice(0, 50) });
+  // 3. 透過 background 儲存歷史紀錄
+  chrome.runtime.sendMessage({ target: 'background', type: 'save-history', text: resultText });
 
   // 4. 將成品送回頁面
   chrome.runtime.sendMessage({

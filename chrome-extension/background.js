@@ -79,6 +79,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } else if (message.type === 'request-mic-permission') {
       // 開啟授權頁面引導使用者授予麥克風權限
       chrome.tabs.create({ url: 'request_mic.html' });
+    } else if (message.type === 'get-style') {
+      chrome.storage.local.get(['selectedStyle'], (data) => {
+        sendResponse({ style: data.selectedStyle || 'smart' });
+      });
+      return true; // 異步回應
+    } else if (message.type === 'save-history') {
+      chrome.storage.local.get(['history'], (data) => {
+        const history = data.history || [];
+        history.unshift(message.text);
+        chrome.storage.local.set({ history: history.slice(0, 50) });
+      });
     }
   } else if (message.target === 'content') {
     // 轉發來自 offscreen.js 處理完畢的成果到當前的 content tab
