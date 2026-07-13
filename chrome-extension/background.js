@@ -2,6 +2,10 @@
 
 // 建立或取得 Offscreen Document
 async function setupOffscreen() {
+  if (!chrome.offscreen) {
+    console.warn('EchoWrite: chrome.offscreen is not supported in this browser.');
+    return;
+  }
   let hasExisting = false;
   try {
     const existingContexts = await chrome.runtime.getContexts({
