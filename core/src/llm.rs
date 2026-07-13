@@ -4,8 +4,8 @@ use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::model::params::LlamaModelParams;
 use std::path::Path;
 
-/// 讀取 raw_text，使用指定的本地端 GGUF 模型進行 AI 潤飾與重組
-pub fn polish_text(raw_text: String, style: String, model_path: &str) -> Result<String, String> {
+/// 讀取 raw_text，使用指定的本地端 GGUF 模型進行 AI 潤飾與重組，支援語音意圖自動偵測
+pub fn polish_text(raw_text: String, _style: String, model_path: &str) -> Result<String, String> {
     // 1. 初始化 Llama.cpp 後端 (LlamaBackend)
     let backend = LlamaBackend::init()
         .map_err(|e| format!("無法初始化 Llama 後端: {:?}", e))?;
@@ -21,21 +21,16 @@ pub fn polish_text(raw_text: String, style: String, model_path: &str) -> Result<
     let mut ctx = model.new_context(&backend, ctx_params)
         .map_err(|e| format!("無法建立模型上下文: {:?}", e))?;
 
-    // 4. 定義適合台灣習慣的 System Prompt
-    let system_prompt = match style.as_str() {
-        "professional" | "work" => {
-            "你是一個專業的台灣秘書助理。請將以下口語重組，刪除所有的贅字（例如：嗯、啊、就是、然後、那個），校正錯字，並整理成結構清晰、用詞專業的公務繁體中文書面語。請維持原有語意，直接輸出潤飾後的文本，不要包含任何開場白或客套回覆。"
-        }
-        "casual" | "chat" => {
-            "你是一個親切的台灣個人助手。請將以下口語轉換成語氣自然、通順流暢的繁體中文，消除口吃與重複，但保留口語隨和的感覺。請直接輸出轉換後的文本，不要有任何客套語。"
-        }
-        "outline" | "notes" => {
-            "請將以下語音內容整理成條理分明的 Markdown 清單大綱（包含重點與待辦事項）。請使用台灣習慣詞彙與繁體中文，直接輸出 Markdown 內容，不要包含額外的說明。"
-        }
-        _ => {
-            "請優化以下繁體中文文本，修復錯字與語句不通順處。請直接輸出結果。"
-        }
-    };
+    // 4. 定義「語音意圖自動識別」的全能型 System Prompt
+    // 讓模型自動辨識使用者的口語內容是否含有指令（例如：「幫我寫信」、「條列整理」），並直接套用對應的格式。
+    let system_prompt = 
+        "你是一個極致智慧的台灣語音助理。請將以下使用者的口語進行重組與潤飾，遵守以下規範：\n\
+         1. 贅字與贅語過濾：徹底刪除口語中的「嗯、啊、然後、就是、那個」等冗詞，並校正口吃與錯字。\n\
+         2. 意圖自動路由：\n\
+            - 若語音中含有格式指令（如「幫我寫信給...」、「用清單/列表整理」、「大綱如下...」、「翻譯成英文...」），請自動將內容重組並輸出為該特定格式（如 Email 格式、Markdown 清單、英文）。\n\
+            - 若無特定格式指令，請將其自動重組為通順、用詞專業、符合台灣繁體中文文書習慣的書面語段落。\n\
+         3. 在地化規範：中英文/數字夾雜時自動加空格。使用台灣繁體標點（，。！？「」『』）。轉換大陸用語（如：文件->檔案、網絡->網路）。\n\
+         4. 輸出限制：直接輸出重組後的結果文本，絕對不可包含任何你自己的說明、旁白、引言或客套回應。";
 
     // 5. 格式化 Prompt (採用 Qwen 格式)
     let prompt = format!(
