@@ -58,30 +58,35 @@ pub fn start_recording() -> Result<(), EchoWriteError> {
 
 #[uniffi::export]
 pub fn stop_recording_and_process(style: String) -> Result<String, EchoWriteError> {
-    let mut state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
-    if !state.is_recording {
-        return Err(EchoWriteError::ProcessError { message: "Not recording".to_string() });
-    }
-    state.is_recording = false;
-    
-    // 1. 取得錄音音訊檔案路徑
-    let audio_path = audio::stop_audio_capture()
-        .map_err(|e| EchoWriteError::ProcessError { message: e })?;
-    
-    // 2. 呼叫本地 ASR 進行語音轉文字
-    let whisper_model = state.whisper_model_path.as_ref()
-        .ok_or_else(|| EchoWriteError::ProcessError { message: "Whisper model not initialized".to_string() })?;
-    let raw_text = asr::transcribe(audio_path, whisper_model)
+    let (audio_path, whisper_model, llm_model) = {
+        let mut state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
+        if !state.is_recording {
+            return Err(EchoWriteError::ProcessError { message: "Not recording".to_string() });
+        }
+        state.is_recording = false;
+        
+        // 1. 取得錄音音訊檔案路徑
+        let audio_path = audio::stop_audio_capture()
+            .map_err(|e| EchoWriteError::ProcessError { message: e })?;
+        
+        let whisper_model = state.whisper_model_path.clone()
+            .ok_or_else(|| EchoWriteError::ProcessError { message: "Whisper model not initialized".to_string() })?;
+        let llm_model = state.llm_model_path.clone()
+            .ok_or_else(|| EchoWriteError::ProcessError { message: "LLM model not initialized".to_string() })?;
+            
+        (audio_path, whisper_model, llm_model)
+    }; // 此處 Mutex 鎖自動釋放！
+
+    // 2. 呼叫本地 ASR 進行語音轉文字 (在鎖外執行)
+    let raw_text = asr::transcribe(audio_path, &whisper_model)
         .map_err(|e| EchoWriteError::ProcessError { message: e })?;
     
     if raw_text.trim().is_empty() {
         return Ok(String::new());
     }
     
-    // 3. 呼叫本地 SLM (Qwen-2.5) 進行句式潤飾與重組
-    let llm_model = state.llm_model_path.as_ref()
-        .ok_or_else(|| EchoWriteError::ProcessError { message: "LLM model not initialized".to_string() })?;
-    let polished_text = llm::polish_text(raw_text, style, llm_model)
+    // 3. 呼叫本地 SLM (Qwen-2.5) 進行句式潤飾與重組 (在鎖外執行)
+    let polished_text = llm::polish_text(raw_text, style, &llm_model)
         .map_err(|e| EchoWriteError::ProcessError { message: e })?;
     
     // 4. 套用台灣繁體中文排版規範

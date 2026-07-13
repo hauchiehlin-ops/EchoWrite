@@ -5,6 +5,7 @@ let recognition = null;
 let isRecording = false;
 let rawTranscript = "";
 let llmEngine = null;
+let initPromise = null;
 
 const SYSTEM_PROMPT = 
   "你是一個極致智慧的台灣語音助理，專門將零碎、雜亂的口語轉寫稿重塑為優雅、邏輯清晰、段落分明的書面文章。請嚴格遵守以下重構規範：\n" +
@@ -12,38 +13,45 @@ const SYSTEM_PROMPT =
   "2. 智慧分段：當說話內容出現主題轉換（如從敘事轉為條列、或討論不同議題）時，自動插入換行符號（\\n\\n）進行分段，避免產生冗長字牆。\n" +
   "3. 智慧橋接：自動修正使用者的思考停頓、口吃、改口與贅詞（例如：將『我們明天...呃...那個...兩點開會』自動橋接為『我們明天兩點開會。』）。\n" +
   "4. 在地化規範：使用台灣繁體標點。中英文/數字夾雜時自動加空格。將大陸用語（如：屏幕、內存、軟件）轉換為台灣用語（如：螢幕、記憶體、軟體）。\n" +
-  "5. 輸出限制：直接輸出重構後的文本，絕對不可包含任何你自己的說明、旁白、引言或客套回應。";
+  "5. 輸出限制：直接輸出重構後的文本，絕對不可包含 any 你自己的說明、旁白、引言或客套回應。";
 
 // 初始化 WebGPU MLC 引擎
 async function initWebLLM() {
   if (llmEngine) return llmEngine;
-  
-  if (!navigator.gpu) {
-    console.warn("EchoWrite: 此瀏覽器不支援 WebGPU，將降級為規則排版模式。");
-    return null;
-  }
+  if (initPromise) return initPromise;
 
-  try {
-    // 建立 WebLLM 引擎，載入輕量級 Qwen-2.5-0.5B-Instruct 模型
-    llmEngine = new webllm.MLCEngine();
-    console.log("EchoWrite: 正在載入本地端 Qwen 0.5B 模型...");
-    
-    // 監聽加載進度
-    llmEngine.setInitProgressCallback((report) => {
-      chrome.runtime.sendMessage({
-        target: 'content',
-        type: 'model-progress',
-        progress: Math.round(report.progress * 100)
+  initPromise = (async () => {
+    if (!navigator.gpu) {
+      console.warn("EchoWrite: 此瀏覽器不支援 WebGPU，將降級為規則排版模式。");
+      return null;
+    }
+
+    try {
+      const engine = new webllm.MLCEngine();
+      console.log("EchoWrite: 正在載入本地端 Qwen 0.5B 模型...");
+      
+      // 監聽加載進度
+      engine.setInitProgressCallback((report) => {
+        chrome.runtime.sendMessage({
+          target: 'content',
+          type: 'model-progress',
+          progress: Math.round(report.progress * 100)
+        });
       });
-    });
 
-    await llmEngine.reload("Qwen2.5-0.5B-Instruct-q4f16_1-MLC");
-    console.log("EchoWrite: 本地 WebGPU 模型載入完成！");
-    return llmEngine;
-  } catch (error) {
-    console.error("EchoWrite: 載入 WebLLM 失敗: ", error);
-    return null;
-  }
+      await engine.reload("Qwen2.5-0.5B-Instruct-q4f16_1-MLC");
+      console.log("EchoWrite: 本地 WebGPU 模型載入完成！");
+      llmEngine = engine;
+      return llmEngine;
+    } catch (error) {
+      console.error("EchoWrite: 載入 WebLLM 失敗: ", error);
+      llmEngine = null;
+      initPromise = null; // 重置以允許下次重新嘗試
+      return null;
+    }
+  })();
+
+  return initPromise;
 }
 
 // 啟動 Speech Recognition
