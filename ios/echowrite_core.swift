@@ -806,10 +806,54 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         }
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+/**
+ * 新增一個自訂詞彙（人名、產品名、公司名等），之後的語音辨識會優先套用，
+ * 降低同音字誤判機率（詳見 `asr::transcribe` 的 initial prompt 用法）。
+ */
+public func addCustomVocabulary(phrase: String)throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_add_custom_vocabulary(
+        FfiConverterString.lower(phrase),$0
+    )
+}
+}
 public func formatOnly(text: String) -> String {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_echowrite_core_fn_func_format_only(
         FfiConverterString.lower(text),$0
+    )
+})
+}
+/**
+ * 取得目前所有自訂詞彙，供設定畫面顯示/管理。
+ */
+public func getCustomVocabulary()throws  -> [String] {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_get_custom_vocabulary($0
     )
 })
 }
@@ -894,7 +938,13 @@ private var initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_echowrite_core_checksum_func_add_custom_vocabulary() != 39138) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_echowrite_core_checksum_func_format_only() != 9783) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_get_custom_vocabulary() != 25049) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_get_model_download_progress() != 25627) {

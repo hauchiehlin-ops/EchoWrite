@@ -33,6 +33,8 @@ targets:
       - sdk: Accelerate.framework
       - sdk: libc++.tbd
       - sdk: CoreML.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
 
   EchoWriteApp:
     type: application
@@ -61,6 +63,8 @@ targets:
       - sdk: Accelerate.framework
       - sdk: libc++.tbd
       - sdk: CoreML.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
       - sdk: AudioToolbox.framework
       - sdk: AVFoundation.framework
       - target: EchoWriteKeyboard

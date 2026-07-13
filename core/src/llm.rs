@@ -10,8 +10,14 @@ pub fn polish_text(raw_text: String, _style: String, model_path: &str) -> Result
     let backend = LlamaBackend::init()
         .map_err(|e| format!("無法初始化 Llama 後端: {:?}", e))?;
 
-    // 2. 設定載入參數並加載量化 GGUF 模型
+    // 2. 設定載入參數並加載量化 GGUF 模型。
+    // Apple 平台編譯時已啟用 llama-cpp-2 的 "metal" feature（見 core/Cargo.toml），
+    // 這裡明確指定卸載全部層到 GPU，讓 Token 生成真正跑在 Metal 而非退回 CPU。
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let model_params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     let model_params = LlamaModelParams::default();
+
     let model = LlamaModel::load_from_file(&backend, Path::new(model_path), &model_params)
         .map_err(|e| format!("無法載入 GGUF 模型 (路徑: {}): {:?}", model_path, e))?;
 

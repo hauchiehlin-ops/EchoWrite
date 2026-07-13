@@ -137,6 +137,19 @@ pub fn format_only(text: String) -> String {
     formatter::format_text(text)
 }
 
+/// 新增一個自訂詞彙（人名、產品名、公司名等），之後的語音辨識會優先套用，
+/// 降低同音字誤判機率（詳見 `asr::transcribe` 的 initial prompt 用法）。
+#[uniffi::export]
+pub fn add_custom_vocabulary(phrase: String) -> Result<(), EchoWriteError> {
+    database::add_custom_phrase(&phrase).map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 取得目前所有自訂詞彙，供設定畫面顯示/管理。
+#[uniffi::export]
+pub fn get_custom_vocabulary() -> Result<Vec<String>, EchoWriteError> {
+    database::get_custom_phrases().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
 fn process_audio_file_internal(
     audio_path: String,
     style: String,
@@ -144,7 +157,9 @@ fn process_audio_file_internal(
     llm_model: String,
 ) -> Result<String, EchoWriteError> {
     // 2. 呼叫本地 ASR 進行語音轉文字 (在鎖外執行)
-    let raw_text = asr::transcribe(audio_path, &whisper_model)
+    // 自訂詞彙查詢失敗不應阻斷整個轉寫流程，僅降級為不使用引導詞。
+    let custom_vocabulary = database::get_custom_phrases().unwrap_or_default();
+    let raw_text = asr::transcribe(audio_path, &whisper_model, &custom_vocabulary)
         .map_err(|e| EchoWriteError::ProcessError { message: e })?;
 
     if raw_text.trim().is_empty() {

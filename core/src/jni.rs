@@ -1,7 +1,10 @@
 #![cfg(target_os = "android")]
 
 use crate::models::ModelKind;
-use crate::{get_model_download_progress, initialize, is_model_ready, process_audio_file, start_model_download};
+use crate::{
+    add_custom_vocabulary, get_custom_vocabulary, get_model_download_progress, initialize, is_model_ready,
+    process_audio_file, start_model_download,
+};
 use jni::objects::{JObject, JString};
 use jni::sys::{jboolean, jint, jlong, jstring, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
@@ -112,6 +115,35 @@ pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_processAudioFile(
     };
 
     match env.new_string(result) {
+        Ok(output) => output.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_addCustomVocabulary(
+    mut env: JNIEnv,
+    _: JObject,
+    phrase: JString,
+) -> jboolean {
+    let phrase = match get_java_string(&mut env, phrase) {
+        Ok(v) => v,
+        Err(_) => return JNI_FALSE,
+    };
+    match add_custom_vocabulary(phrase) {
+        Ok(_) => JNI_TRUE,
+        Err(_) => JNI_FALSE,
+    }
+}
+
+/// 回傳所有自訂詞彙，以換行字元（\n）分隔。
+#[no_mangle]
+pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_getCustomVocabulary(
+    mut env: JNIEnv,
+    _: JObject,
+) -> jstring {
+    let joined = get_custom_vocabulary().unwrap_or_default().join("\n");
+    match env.new_string(joined) {
         Ok(output) => output.into_raw(),
         Err(_) => ptr::null_mut(),
     }

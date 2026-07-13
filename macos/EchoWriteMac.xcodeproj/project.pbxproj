@@ -162,7 +162,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0.0;
 				MODULEMAP_FILE = "$(PROJECT_DIR)/../ios/echowrite_coreFFI.modulemap";
-				OTHER_LDFLAGS = "$(inherited) -lechowrite_core -lc++ -framework Accelerate -framework CoreML";
+				OTHER_LDFLAGS = "$(inherited) -lechowrite_core -lc++ -framework Accelerate -framework CoreML -framework Metal -framework MetalKit";
 				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.mac;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -185,7 +185,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0.0;
 				MODULEMAP_FILE = "$(PROJECT_DIR)/../ios/echowrite_coreFFI.modulemap";
-				OTHER_LDFLAGS = "$(inherited) -lechowrite_core -lc++ -framework Accelerate -framework CoreML";
+				OTHER_LDFLAGS = "$(inherited) -lechowrite_core -lc++ -framework Accelerate -framework CoreML -framework Metal -framework MetalKit";
 				PRODUCT_BUNDLE_IDENTIFIER = com.echowrite.mac;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;

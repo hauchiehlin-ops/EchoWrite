@@ -11,9 +11,6 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
-# 本地 LLM (SLM) 推理
-llama-cpp-2 = { version = "0.1" }
-
 # 本地資料庫
 rusqlite = { version = "0.31", features = ["bundled"] }
 dirs-next = "2.0"
@@ -40,9 +37,14 @@ jni = { version = "0.21", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 sha2 = "0.10"
 
-# 依不同平台載入 whisper-rs (Apple 平台啟用 coreml 加速)
+# 依不同平台載入 whisper-rs / llama-cpp-2
+# Apple 平台：Whisper 啟用 CoreML (ANE) 加速，Llama 啟用 Metal GPU 加速。
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 whisper-rs = { version = "0.15", features = ["coreml"] }
+llama-cpp-2 = { version = "0.1", features = ["metal"] }
+# 用於解壓縮下載回來的 CoreML 編碼器模型 (*.mlmodelc.zip)
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
 whisper-rs = { version = "0.15" }
+llama-cpp-2 = { version = "0.1" }

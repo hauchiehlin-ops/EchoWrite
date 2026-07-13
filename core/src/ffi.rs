@@ -1,7 +1,7 @@
 use crate::models::ModelKind;
 use crate::{
-    get_model_download_progress, initialize, is_model_ready, process_audio_file, start_model_download,
-    start_recording, stop_recording_and_process,
+    add_custom_vocabulary, get_custom_vocabulary, get_model_download_progress, initialize, is_model_ready,
+    process_audio_file, start_model_download, start_recording, stop_recording_and_process,
 };
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
@@ -128,6 +128,28 @@ pub extern "C" fn echowrite_process_audio_file(audio_path: *const c_char, style:
 
     match process_audio_file(audio_path, style) {
         Ok(text) => into_raw_c_string(text),
+        Err(_) => into_raw_c_string(String::new()),
+    }
+}
+
+/// 新增一個自訂詞彙（人名/產品名等）。回傳 0 = 成功。
+#[no_mangle]
+pub extern "C" fn echowrite_add_custom_vocabulary(phrase: *const c_char) -> c_int {
+    let phrase = match str_from_ptr(phrase) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    match add_custom_vocabulary(phrase) {
+        Ok(_) => 0,
+        Err(_) => 3,
+    }
+}
+
+/// 取得所有自訂詞彙，以換行字元（\n）分隔回傳。
+#[no_mangle]
+pub extern "C" fn echowrite_get_custom_vocabulary() -> *mut c_char {
+    match get_custom_vocabulary() {
+        Ok(phrases) => into_raw_c_string(phrases.join("\n")),
         Err(_) => into_raw_c_string(String::new()),
     }
 }

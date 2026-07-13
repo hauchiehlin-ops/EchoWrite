@@ -41,6 +41,12 @@ struct ModelSpec {
     url: &'static str,
     // 若提供，下載完成後會校驗 sha256；留空則略過校驗。
     sha256: Option<&'static str>,
+    // 僅 Whisper 使用：Apple 平台的 CoreML (ANE) 編碼器模型下載位址（*.mlmodelc.zip）。
+    // 解壓後會改名為 `{filename 去除副檔名}-encoder.mlmodelc`，符合 whisper.cpp 的查找慣例
+    // （見 whisper_get_coreml_path_encoder：把 .bin 換成 -encoder.mlmodelc）。下載/解壓失敗
+    // 屬於盡力而為 (best-effort)：whisper.cpp 編譯時已定義 WHISPER_COREML_ALLOW_FALLBACK，
+    // 找不到就自動退回 Metal/CPU，不影響 ASR 主流程。
+    coreml_encoder_url: Option<&'static str>,
 }
 
 fn spec_for(kind: ModelKind) -> ModelSpec {
@@ -49,10 +55,14 @@ fn spec_for(kind: ModelKind) -> ModelSpec {
             filename: "ggml-base-q5_1.bin",
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin",
             sha256: None,
+            coreml_encoder_url: Some(
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-encoder.mlmodelc.zip",
+            ),
         },
         ModelKind::Llm => ModelSpec {
             filename: "qwen2.5-0.5b-instruct-q5_k_m.gguf",
             url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q5_k_m.gguf",
+            coreml_encoder_url: None,
             sha256: None,
         },
     }
@@ -220,6 +230,15 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
     }
 
     fs::rename(&tmp_dest, &dest).map_err(|e| e.to_string())?;
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    if let Some(coreml_url) = spec.coreml_encoder_url {
+        // 盡力而為：CoreML 加速模型下載/解壓失敗不影響主流程，僅記錄警告。
+        if let Err(e) = try_setup_coreml_encoder(coreml_url, &dest) {
+            eprintln!("EchoWrite: CoreML encoder setup skipped ({e}); ASR 將使用 Metal/CPU。");
+        }
+    }
+
     set_progress(
         kind,
         ModelProgress {
@@ -244,4 +263,73 @@ fn sha256_of_file(path: &PathBuf) -> Result<String, String> {
         hasher.update(&buffer[..n]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// 下載並解壓 CoreML 編碼器模型（*.mlmodelc.zip），放置到
+/// `{whisper_model_path 去除副檔名}-encoder.mlmodelc`，讓 whisper.cpp 的
+/// `WHISPER_USE_COREML` 查找邏輯能自動找到它並啟用 Apple Neural Engine 加速。
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn try_setup_coreml_encoder(url: &str, whisper_model_path: &PathBuf) -> Result<(), String> {
+    let final_dir = {
+        let mut stem = whisper_model_path.clone();
+        stem.set_extension("");
+        let mut name = stem
+            .file_name()
+            .ok_or("invalid model filename")?
+            .to_os_string();
+        name.push("-encoder.mlmodelc");
+        let mut path = whisper_model_path.clone();
+        path.set_file_name(name);
+        path
+    };
+
+    if final_dir.is_dir() {
+        return Ok(()); // 已經設置過。
+    }
+
+    let response = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    let bytes = response.bytes().map_err(|e| e.to_string())?;
+
+    let zip_path = whisper_model_path.with_extension("mlmodelc.zip.part");
+    fs::write(&zip_path, &bytes).map_err(|e| e.to_string())?;
+
+    let extract_dir = whisper_model_path.with_extension("mlmodelc.extract.tmp");
+    let _ = fs::remove_dir_all(&extract_dir);
+    fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
+
+    let zip_file = File::open(&zip_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| e.to_string())?;
+    archive
+        .extract(&extract_dir)
+        .map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(&zip_path);
+
+    // 壓縮檔內通常會有一層 *.mlmodelc 目錄（可能巢狀一層資料夾），找出它。
+    let mlmodelc_dir = find_mlmodelc_dir(&extract_dir)
+        .ok_or_else(|| "no .mlmodelc directory found in archive".to_string())?;
+
+    fs::rename(&mlmodelc_dir, &final_dir).map_err(|e| e.to_string())?;
+    let _ = fs::remove_dir_all(&extract_dir);
+
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn find_mlmodelc_dir(root: &std::path::Path) -> Option<PathBuf> {
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.extension().map(|e| e == "mlmodelc").unwrap_or(false) {
+                return Some(path);
+            }
+            if let Some(found) = find_mlmodelc_dir(&path) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }

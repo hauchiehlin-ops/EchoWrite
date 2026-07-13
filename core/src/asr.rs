@@ -1,8 +1,10 @@
 use whisper_rs::{WhisperContext, FullParams, SamplingStrategy};
 use std::path::Path;
 
-/// 讀取 WAV 音訊檔並使用本地 Whisper 模型進行語音轉寫
-pub fn transcribe(audio_path: String, model_path: &str) -> Result<String, String> {
+/// 讀取 WAV 音訊檔並使用本地 Whisper 模型進行語音轉寫。
+/// `custom_vocabulary` 會拼接為 Whisper 的 initial prompt，引導 ASR 將發音相近的
+/// 詞彙精確辨識為使用者自訂的專有名詞（人名、產品名等），降低 WER。
+pub fn transcribe(audio_path: String, model_path: &str, custom_vocabulary: &[String]) -> Result<String, String> {
     // 1. 讀取音訊檔並轉化為 f32 PCM 數據
     let mut reader = hound::WavReader::open(Path::new(&audio_path))
         .map_err(|e| format!("無法開啟音訊檔: {}", e))?;
@@ -35,6 +37,10 @@ pub fn transcribe(audio_path: String, model_path: &str) -> Result<String, String
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
+
+    if !custom_vocabulary.is_empty() {
+        params.set_initial_prompt(&custom_vocabulary.join("、"));
+    }
 
     // 4. 執行 ASR 推理
     state.full(params, &samples[..])
