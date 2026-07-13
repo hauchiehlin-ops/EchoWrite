@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>啟用麥克風 - EchoWrite</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+TC:wght@300;400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0a0b10;
+      --glass-bg: rgba(20, 22, 33, 0.7);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --accent-color: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.4);
+      --text-primary: #f3f4f6;
+    }
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: 'Outfit', 'Noto Sans TC', sans-serif;
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+    .container {
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      border-radius: 24px;
+      padding: 40px;
+      max-width: 420px;
+      text-align: center;
+      box-shadow: 0 30px 60px rgba(0,0,0,0.6), 0 0 40px rgba(99,102,241,0.15);
+      animation: float-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .icon {
+      font-size: 4rem;
+      width: 100px;
+      height: 100px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 2px solid var(--accent-color);
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 25px;
+      box-shadow: 0 0 25px var(--accent-glow);
+      animation: pulse-glow 2s infinite ease-in-out;
+    }
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      margin-bottom: 15px;
+      background: linear-gradient(135deg, #fff 40%, #a5b4fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    p {
+      font-size: 0.9rem;
+      color: #9ca3af;
+      line-height: 1.6;
+      margin-bottom: 30px;
+    }
+    .btn {
+      background: var(--accent-color);
+      border: none;
+      color: #fff;
+      padding: 14px 28px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-radius: 12px;
+      cursor: pointer;
+      width: 100%;
+      box-shadow: 0 4px 15px var(--accent-glow);
+      transition: all 0.3s ease;
+    }
+    .btn:hover {
+      background: #4f46e5;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(99,102,241,0.6);
+    }
+    @keyframes float-in {
+      from { opacity: 0; transform: translateY(30px) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes pulse-glow {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 25px var(--accent-glow); }
+      50% { transform: scale(1.05); box-shadow: 0 0 40px rgba(99,102,241,0.8); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">🎤</div>
+    <h2>啟用麥克風授權</h2>
+    <p>EchoWrite 是一款完全在您本機運行的 AI 語音助理。請點擊下方按鈕以允許瀏覽器存取您的麥克風。</p>
+    <button class="btn" id="grantBtn">點擊授權麥克風</button>
+  </div>
+  <script src="request_mic.js"></script>
+</body>
+</html>

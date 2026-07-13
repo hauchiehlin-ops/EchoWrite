@@ -25,7 +25,7 @@ async function initWebLLM() {
 
   try {
     // 建立 WebLLM 引擎，載入輕量級 Qwen-2.5-0.5B-Instruct 模型
-    llmEngine = new webllm.Engine();
+    llmEngine = new webllm.MLCEngine();
     console.log("EchoWrite: 正在載入本地端 Qwen 0.5B 模型...");
     
     // 監聽加載進度
@@ -89,6 +89,9 @@ function startSpeechRecognition() {
 
   recognition.onerror = (event) => {
     console.error("Speech recognition error: ", event.error);
+    if (event.error === 'not-allowed') {
+      chrome.runtime.sendMessage({ target: 'background', type: 'request-mic-permission' });
+    }
     stopRecording(true);
   };
 

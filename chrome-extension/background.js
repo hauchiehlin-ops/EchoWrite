@@ -76,6 +76,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     } else if (message.type === 'stop-recording-request') {
       sendToOffscreen({ target: 'offscreen', type: 'stop-recording' });
+    } else if (message.type === 'request-mic-permission') {
+      // 開啟授權頁面引導使用者授予麥克風權限
+      chrome.tabs.create({ url: 'request_mic.html' });
     }
   } else if (message.target === 'content') {
     // 轉發來自 offscreen.js 處理完畢的成果到當前的 content tab
