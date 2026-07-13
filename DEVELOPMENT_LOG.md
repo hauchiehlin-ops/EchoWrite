@@ -100,8 +100,14 @@
 
 ---
 
+### 8. Apple CoreML 硬件加速落地與依賴優化
+*   **平台條件式依賴編寫**：為避免在 Windows 等其他平台編譯時出錯，在 `core/Cargo.toml` 尾端採用 `[target.'cfg(any(target_os = \"macos\", target_os = \"ios\"))'.dependencies]` 結構，僅在 Apple 平台啟用 `whisper-rs` 的 `coreml` 硬體加速 Feature。
+*   **iOS XCFramework 更新**：重新執行 `./build_ios.sh`，成功打包出包含 **Apple Neural Engine (ANE)** 硬體加速功能的 `EchoWriteCore.xcframework`。
+
+---
+
 ## 🛠️ 編譯與驗證狀態
 *   **核心庫編譯**：使用 `cargo check` 已確認在 macOS (arm64) 環境下**順利通過編譯，0 錯誤，0 警告**。
 *   **單元測試**：`cargo test` 全數通過。
-*   **各架構 iOS 編譯**：`aarch64-apple-ios`、`x86_64-apple-ios`、`aarch64-apple-ios-sim` 三架構均編譯成功並打包為 XCFramework。
+*   **各架構 iOS 編譯**：`aarch64-apple-ios`、`x86_64-apple-ios`、`aarch64-apple-ios-sim` 三架構均編譯成功並打包為支援 CoreML 加速的 XCFramework。
 *   **版控狀態**：已成功推送（`git push`）至遠端 GitHub 儲存庫：`https://github.com/hauchiehlin-ops/EchoWrite.git` 的 `main` 分支。
