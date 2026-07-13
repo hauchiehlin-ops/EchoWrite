@@ -76,4 +76,66 @@ mod tests {
         let expected = "我的螢幕壞了，所以我買了個新的硬體。這是我最近開發的軟體 project。".to_string();
         assert_eq!(format_text(input), expected);
     }
+
+    #[test]
+    fn test_empty_input() {
+        assert_eq!(format_text(String::new()), "");
+    }
+
+    #[test]
+    fn test_trims_surrounding_whitespace() {
+        assert_eq!(format_text("  你好  ".to_string()), "你好");
+    }
+
+    #[test]
+    fn test_multiple_terminology_replacements() {
+        let input = "服務器上的數據庫算法需要用戶激活菜單才能支持新功能".to_string();
+        let output = format_text(input);
+        assert!(output.contains("伺服器"));
+        assert!(output.contains("資料庫"));
+        assert!(output.contains("演算法"));
+        assert!(output.contains("使用者"));
+        assert!(output.contains("啟用"));
+        assert!(output.contains("選單"));
+        assert!(output.contains("支援"));
+        // 確認簡中詞彙已完全被取代，不殘留原詞
+        assert!(!output.contains("服務器上"));
+        assert!(!output.contains("數據庫"));
+    }
+
+    #[test]
+    fn test_halfwidth_punctuation_converted_to_fullwidth() {
+        let input = "你好,世界.真的嗎?太好了!等等:對;\"是的\"'沒錯'".to_string();
+        let output = format_text(input);
+        assert!(output.contains('，'));
+        assert!(output.contains('。'));
+        assert!(output.contains('？'));
+        assert!(output.contains('！'));
+        assert!(output.contains('：'));
+        assert!(output.contains('；'));
+        // 半形標點應該已經完全消失
+        assert!(!output.contains(','));
+        assert!(!output.contains('.'));
+        assert!(!output.contains('?'));
+        assert!(!output.contains('!'));
+    }
+
+    #[test]
+    fn test_spacing_between_chinese_and_english() {
+        assert_eq!(format_text("我愛swift語言".to_string()), "我愛 swift 語言");
+        assert_eq!(format_text("iPhone很好用".to_string()), "iPhone 很好用");
+    }
+
+    #[test]
+    fn test_pure_english_text_untouched_by_terminology_map() {
+        let input = "Hello World 123".to_string();
+        assert_eq!(format_text(input), "Hello World 123");
+    }
+
+    #[test]
+    fn test_idempotent_on_already_formatted_text() {
+        let once = format_text("我的螢幕壞了，所以買了新的軟體。".to_string());
+        let twice = format_text(once.clone());
+        assert_eq!(once, twice);
+    }
 }

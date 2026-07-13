@@ -333,3 +333,121 @@ fn find_mlmodelc_dir(root: &std::path::Path) -> Option<PathBuf> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    lazy_static! {
+        // `ECHOWRITE_MODEL_DIR` 是行程層級的環境變數，多個測試若並行修改會互相干擾，
+        // 因此以此鎖序列化所有會讀寫該環境變數的測試。
+        static ref ENV_LOCK: Mutex<()> = Mutex::new(());
+    }
+
+    /// 在隔離的臨時目錄下執行測試主體，測試結束後清除環境變數與目錄，避免污染其他測試。
+    fn with_temp_model_dir<F: FnOnce(&PathBuf)>(f: F) {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("echowrite-test-{}-{}", std::process::id(), unique));
+        std::env::set_var("ECHOWRITE_MODEL_DIR", &dir);
+
+        f(&dir);
+
+        std::env::remove_var("ECHOWRITE_MODEL_DIR");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_model_dir_respects_env_override_and_creates_it() {
+        with_temp_model_dir(|dir| {
+            assert_eq!(model_dir(), *dir);
+            assert!(dir.is_dir(), "model_dir() 應該自動建立目錄");
+        });
+    }
+
+    #[test]
+    fn test_model_path_uses_expected_filenames() {
+        with_temp_model_dir(|dir| {
+            assert_eq!(model_path(ModelKind::Whisper), dir.join("ggml-base-q5_1.bin"));
+            assert_eq!(
+                model_path(ModelKind::Llm),
+                dir.join("qwen2.5-0.5b-instruct-q5_k_m.gguf")
+            );
+        });
+    }
+
+    #[test]
+    fn test_is_model_ready_reflects_file_presence() {
+        with_temp_model_dir(|_dir| {
+            assert!(!is_model_ready(ModelKind::Whisper));
+            assert_eq!(default_model_path(ModelKind::Whisper), None);
+
+            let path = model_path(ModelKind::Whisper);
+            fs::write(&path, b"fake model bytes").unwrap();
+
+            assert!(is_model_ready(ModelKind::Whisper));
+            assert_eq!(
+                default_model_path(ModelKind::Whisper),
+                Some(path.to_string_lossy().to_string())
+            );
+            // 另一個模型種類不應受影響
+            assert!(!is_model_ready(ModelKind::Llm));
+        });
+    }
+
+    #[test]
+    fn test_get_progress_falls_back_to_file_presence_when_untracked() {
+        with_temp_model_dir(|_dir| {
+            // 從未呼叫過 start_download，PROGRESS 表裡沒有紀錄 -> 依檔案是否存在推斷狀態
+            let path = model_path(ModelKind::Whisper);
+            let progress = get_progress(ModelKind::Whisper);
+            assert_eq!(progress.state, ModelDownloadState::NotStarted);
+            assert_eq!(progress.downloaded_bytes, 0);
+
+            fs::write(&path, b"fake").unwrap();
+            let progress = get_progress(ModelKind::Whisper);
+            assert_eq!(progress.state, ModelDownloadState::Ready);
+        });
+    }
+
+    #[test]
+    fn test_set_progress_is_isolated_per_kind() {
+        with_temp_model_dir(|_dir| {
+            set_progress(
+                ModelKind::Llm,
+                ModelProgress {
+                    downloaded_bytes: 512,
+                    total_bytes: 1024,
+                    state: ModelDownloadState::Downloading,
+                    error: None,
+                },
+            );
+
+            let llm_progress = get_progress(ModelKind::Llm);
+            assert_eq!(llm_progress.downloaded_bytes, 512);
+            assert_eq!(llm_progress.state, ModelDownloadState::Downloading);
+
+            // Whisper 這個種類完全沒被寫入過，不應該讀到 Llm 剛設定的數值
+            let whisper_progress = get_progress(ModelKind::Whisper);
+            assert_ne!(whisper_progress.downloaded_bytes, 512);
+        });
+    }
+
+    #[test]
+    fn test_start_download_short_circuits_when_already_ready() {
+        with_temp_model_dir(|_dir| {
+            let path = model_path(ModelKind::Whisper);
+            fs::write(&path, b"already downloaded").unwrap();
+
+            start_download(ModelKind::Whisper);
+
+            // 檔案已存在時應立即標記為 Ready，不應嘗試連網下載並覆蓋掉現有檔案。
+            let progress = get_progress(ModelKind::Whisper);
+            assert_eq!(progress.state, ModelDownloadState::Ready);
+            assert_eq!(fs::read(&path).unwrap(), b"already downloaded");
+        });
+    }
+}

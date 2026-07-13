@@ -10,6 +10,13 @@ crate-type = ["lib", "staticlib", "cdylib"]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
+[[bench]]
+name = "formatter_bench"
+harness = false
+
+[dev-dependencies]
+criterion = "0.5"
+
 [dependencies]
 # 本地資料庫
 rusqlite = { version = "0.31", features = ["bundled"] }
