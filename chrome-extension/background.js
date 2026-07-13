@@ -1,7 +1,38 @@
 // EchoWrite Background Service Worker (background.js)
 
 let offscreenReady = false;
-let pendingMessages = [];
+
+// ============================================================
+// 擴充套件安裝/更新時，自動將 content script 注入所有已開啟的分頁
+// （解決重新載入擴充套件後，舊分頁無 content script 的問題）
+// ============================================================
+chrome.runtime.onInstalled.addListener(async () => {
+  console.log('EchoWrite: Extension installed/updated, injecting content scripts into existing tabs...');
+  try {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      // 跳過 chrome:// 和 edge:// 等受保護的頁面
+      if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:')) {
+        continue;
+      }
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content.js']
+        });
+        await chrome.scripting.insertCSS({
+          target: { tabId: tab.id },
+          files: ['content.css']
+        });
+        console.log('EchoWrite: Injected content script into tab', tab.id, tab.url?.substring(0, 50));
+      } catch (e) {
+        // 某些受限頁面無法注入，靜默忽略
+      }
+    }
+  } catch (e) {
+    console.warn('EchoWrite: Failed to inject into existing tabs:', e);
+  }
+});
 
 // 建立或取得 Offscreen Document
 async function setupOffscreen() {
@@ -22,7 +53,7 @@ async function setupOffscreen() {
 
   if (hasExisting) {
     console.log('EchoWrite: Offscreen document already exists, marking as ready.');
-    offscreenReady = true; // 已存在的 offscreen 一定已完成載入
+    offscreenReady = true;
     return true;
   }
 
@@ -75,12 +106,46 @@ function sendToOffscreen(message) {
   });
 }
 
+// 嘗試將訊息送達 content script，若失敗則動態注入後重試
+async function sendToContentTab(message) {
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tabs[0]) {
+    console.warn('EchoWrite: No active tab found!');
+    return;
+  }
+
+  const tabId = tabs[0].id;
+  console.log('EchoWrite: Forwarding to content tab:', message.type, 'tabId=' + tabId);
+
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+  } catch (e) {
+    // content script 不存在，動態注入後重試
+    console.log('EchoWrite: Content script not found, injecting dynamically...');
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['content.js']
+      });
+      await chrome.scripting.insertCSS({
+        target: { tabId: tabId },
+        files: ['content.css']
+      });
+      // 注入完成，重試發送
+      await chrome.tabs.sendMessage(tabId, message);
+      console.log('EchoWrite: Retry after injection succeeded.');
+    } catch (e2) {
+      console.warn('EchoWrite: Failed to inject and send:', e2.message);
+    }
+  }
+}
+
 // 監聽全域快捷鍵 Alt + S
 chrome.commands.onCommand.addListener(async (command) => {
   console.log('EchoWrite: Command received:', command);
   if (command === 'toggle-recording') {
     const success = await setupOffscreen();
-    console.log('EchoWrite: setupOffscreen result:', success, 'offscreenReady:', offscreenReady);
+    console.log('EchoWrite: setupOffscreen result:', success);
     if (success) {
       sendToOffscreen({ target: 'offscreen', type: 'toggle-recording' });
     }
@@ -89,7 +154,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 // 監聽來自 content.js 或 offscreen.js 的訊息並進行轉發
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // ====== 來自 offscreen.js 的就緒信號 ======
+  // 來自 offscreen.js 的就緒信號
   if (message.target === 'background' && message.type === 'offscreen-ready') {
     console.log('EchoWrite: Offscreen ready signal received!');
     offscreenReady = true;
@@ -123,18 +188,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     }
   } else if (message.target === 'content') {
-    // 轉發來自 offscreen.js 的成果到當前 content tab
-    console.log('EchoWrite: Forwarding to content tab:', message.type);
-    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        console.log('EchoWrite: Sending to tab', tabs[0].id);
-        chrome.tabs.sendMessage(tabs[0].id, message).catch((e) => {
-          console.warn('EchoWrite: Failed to send to tab:', e.message);
-        });
-      } else {
-        console.warn('EchoWrite: No active tab found!');
-      }
-    });
+    // 轉發來自 offscreen.js 的成果到當前 content tab（自動注入 fallback）
+    sendToContentTab(message);
   }
   return true;
 });
