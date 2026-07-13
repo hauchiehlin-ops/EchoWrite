@@ -26,7 +26,8 @@ async function setupOffscreen() {
     });
     console.log('EchoWrite: Offscreen document created.');
   } catch (err) {
-    if (err.message && err.message.includes('Only a single offscreen document')) {
+    const errMsg = err?.message || String(err);
+    if (errMsg.includes('Only a single offscreen document')) {
       console.log('EchoWrite: Offscreen document already exists.');
     } else {
       console.error('EchoWrite: Failed to create offscreen document:', err);

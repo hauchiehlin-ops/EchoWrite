@@ -115,7 +115,7 @@
     -   **Popup 介面** (`popup.html/css/js`)：玻璃擬態暗色質感、Outfits 字型、自訂風格管理與歷史複製剪貼簿。
     -   **Content 注入** (`content.js/css`)：Alt + S 快捷鍵呼叫半透明懸浮流光 Widget，配有 Pulse 動態呼吸聲波，並使用 DOM Range API 在游標焦點（包含 contenteditable 編輯器）進行實時打字與取代。
     -   **視覺識別**：使用 `sips` 提取 Option A 圖標裁切生成 16/48/128 像素 the PNG 圖標組。
-*   **背景調試與修復**：修正了 `background.js` 中對 `content.js` 備用鍵盤監聽發送的 `toggle-recording` 訊息接收遺漏問題；並將 `chrome.tabs.query` 的參數 `currentWindow` 改為 `lastFocusedWindow`，防止背景 Service Worker 因無 UI 主體而無法正確認證當前作用分頁（Active Tab）的問題。
+*   **背景調試與修復**：修正了 `background.js` 中對 `content.js` 備用鍵盤監聽發送的 `toggle-recording` 訊息接收遺漏問題；並將 `chrome.tabs.query` 的參數 `currentWindow` 改為 `lastFocusedWindow`，防止背景 Service Worker 因無 UI 主體而無法正確認證當前作用分頁（Active Tab）的問題。同時，針對 offscreen 建立錯誤捕獲區塊進行了**防禦性程式設計優化**：利用 `err?.message || String(err)` 確保捕獲的 Exception 訊息恆為字串，避免當例外並非標準 Error 物件時，在 `includes()` 判斷中因讀取 `undefined` 屬性而引發第二次二次崩潰。
 
 ---
 
