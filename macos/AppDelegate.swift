@@ -8,23 +8,74 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var hotKeyRef: EventHotKeyRef?
     var isRecording = false
-    
+    var modelsReady = false
+    var downloadProgressTimer: Timer?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 1. 初始化選單列圖示 (Menubar Status Item)
         setupStatusItem()
-        
+
         // 2. 註冊全域雙擊 Option 鍵或全域熱鍵 (Carbon HotKey)
         registerGlobalHotKey()
-        
-        // 3. 載入本地 Rust 核心庫 (UniFFI 封裝的 echowrite-core)
-        // 由 UniFFI 自動生成的 Swift 介面：
+
+        // 3. 載入本地 Rust 核心庫。傳入空字串，交由 Rust 端自動解析
+        //    ~/.echowrite/models 下已下載的模型（若尚未下載會自動觸發下載）。
         do {
-            let whisperPath = Bundle.main.path(forResource: "whisper-medium-q5", ofType: "bin") ?? ""
-            let llmPath = Bundle.main.path(forResource: "qwen-2.5-7b-q4", ofType: "gguf") ?? ""
-            try ewInitialize(whisperPath: whisperPath, llmPath: llmPath)
+            try ewInitialize(whisperPath: "", llmPath: "")
             print("EchoWrite: Core initialized successfully.")
         } catch {
             print("EchoWrite: Failed to initialize core: \(error)")
+        }
+
+        ensureModelsReady()
+    }
+
+    /// 檢查 Whisper / LLM 模型是否已存在本地；若缺少任一個則啟動背景下載，
+    /// 並每秒輪詢一次進度，更新選單列圖示提示，下載完成後才允許錄音。
+    func ensureModelsReady() {
+        let whisperReady = ewIsModelReady(kind: .whisper)
+        let llmReady = ewIsModelReady(kind: .llm)
+
+        if whisperReady && llmReady {
+            modelsReady = true
+            updateStatusBarTooltip(text: "EchoWrite：就緒")
+            return
+        }
+
+        modelsReady = false
+        updateStatusBarTooltip(text: "EchoWrite：下載模型中…")
+        if !whisperReady { ewStartModelDownload(kind: .whisper) }
+        if !llmReady { ewStartModelDownload(kind: .llm) }
+
+        downloadProgressTimer?.invalidate()
+        downloadProgressTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let w = ewGetModelDownloadProgress(kind: .whisper)
+            let l = ewGetModelDownloadProgress(kind: .llm)
+
+            if w.state == .failed || l.state == .failed {
+                self.updateStatusBarTooltip(text: "EchoWrite：模型下載失敗，請檢查網路後重試")
+                timer.invalidate()
+                return
+            }
+
+            if w.state == .ready && l.state == .ready {
+                self.modelsReady = true
+                self.updateStatusBarTooltip(text: "EchoWrite：就緒")
+                timer.invalidate()
+                return
+            }
+
+            let downloaded = w.downloadedBytes + l.downloadedBytes
+            let total = max(w.totalBytes + l.totalBytes, 1)
+            let percent = Int(Double(downloaded) / Double(total) * 100)
+            self.updateStatusBarTooltip(text: "EchoWrite：下載模型中… \(percent)%")
+        }
+    }
+
+    func updateStatusBarTooltip(text: String) {
+        DispatchQueue.main.async {
+            self.statusItem?.button?.toolTip = text
         }
     }
     
@@ -49,6 +100,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func startRecording() {
+        guard modelsReady else {
+            print("EchoWrite: Models not ready yet, ignoring record request.")
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "模型下載中"
+                alert.informativeText = "本地端語音與潤飾模型仍在下載，請稍候片刻再試一次。"
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "確定")
+                alert.runModal()
+            }
+            return
+        }
+
         // 檢查 Mac 系統麥克風授權狀態
         let authStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         if authStatus == .denied || authStatus == .restricted {

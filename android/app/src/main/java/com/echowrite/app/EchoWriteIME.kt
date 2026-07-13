@@ -18,31 +18,93 @@ class EchoWriteIME : InputMethodService() {
     private var recordButton: Button? = null
     private var audioRecord: AudioRecord? = null
     private var tempAudioFile: File? = null
+    private var modelsReady = false
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var progressPoller: Runnable? = null
 
     companion object {
+        const val MODEL_KIND_WHISPER = 0
+        const val MODEL_KIND_LLM = 1
+        const val MODEL_STATE_READY = 3
+        const val MODEL_STATE_FAILED = 4
+
         init {
             System.loadLibrary("echowrite_core")
         }
     }
 
+    // 空字串代表「未指定路徑」，交由 Rust 端自動解析本地模型目錄下已下載的模型。
     private external fun initialize(whisperPath: String, llmPath: String): Boolean
     private external fun processAudioFile(audioPath: String, style: String): String
+    private external fun isModelReady(kind: Int): Boolean
+    private external fun startModelDownload(kind: Int)
+    /** 回傳格式：`"state:downloaded:total"` */
+    private external fun getModelDownloadProgress(kind: Int): String
 
     override fun onCreateInputView(): View {
         val keyboardView = layoutInflater.inflate(R.layout.keyboard_layout, null)
         recordButton = keyboardView.findViewById(R.id.btn_record)
 
-        val whisperModel = File(filesDir, "whisper-small-q4.bin").absolutePath
-        val llmModel = File(filesDir, "qwen-2.5-1.5b-q4.gguf").absolutePath
-        initialize(whisperModel, llmModel)
-
+        initialize("", "")
         tempAudioFile = File(cacheDir, "temp_input.wav")
+        ensureModelsReady()
 
         recordButton?.setOnClickListener {
             toggleRecording()
         }
 
         return keyboardView
+    }
+
+    private fun ensureModelsReady() {
+        val whisperReady = isModelReady(MODEL_KIND_WHISPER)
+        val llmReady = isModelReady(MODEL_KIND_LLM)
+
+        if (whisperReady && llmReady) {
+            modelsReady = true
+            recordButton?.text = "🎙️ 按下說話 (EchoWrite)"
+            return
+        }
+
+        modelsReady = false
+        recordButton?.text = "⬇️ 下載模型中..."
+        if (!whisperReady) startModelDownload(MODEL_KIND_WHISPER)
+        if (!llmReady) startModelDownload(MODEL_KIND_LLM)
+
+        val poller = object : Runnable {
+            override fun run() {
+                val w = getModelDownloadProgress(MODEL_KIND_WHISPER).split(":")
+                val l = getModelDownloadProgress(MODEL_KIND_LLM).split(":")
+                val wState = w[0].toIntOrNull() ?: 0
+                val lState = l[0].toIntOrNull() ?: 0
+
+                when {
+                    wState == MODEL_STATE_FAILED || lState == MODEL_STATE_FAILED -> {
+                        recordButton?.text = "❌ 模型下載失敗，請檢查網路"
+                        return
+                    }
+                    wState == MODEL_STATE_READY && lState == MODEL_STATE_READY -> {
+                        modelsReady = true
+                        recordButton?.text = "🎙️ 按下說話 (EchoWrite)"
+                        return
+                    }
+                    else -> {
+                        val downloaded = (w.getOrNull(1)?.toLongOrNull() ?: 0L) + (l.getOrNull(1)?.toLongOrNull() ?: 0L)
+                        val total = ((w.getOrNull(2)?.toLongOrNull() ?: 0L) + (l.getOrNull(2)?.toLongOrNull() ?: 0L)).coerceAtLeast(1L)
+                        val percent = (downloaded * 100 / total).toInt()
+                        recordButton?.text = "⬇️ 下載模型中... $percent%"
+                        mainHandler.postDelayed(this, 1000)
+                    }
+                }
+            }
+        }
+        progressPoller = poller
+        mainHandler.postDelayed(poller, 1000)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        progressPoller?.let { mainHandler.removeCallbacks(it) }
     }
 
     private fun toggleRecording() {
@@ -54,6 +116,11 @@ class EchoWriteIME : InputMethodService() {
     }
 
     private fun startRecording() {
+        if (!modelsReady) {
+            recordButton?.text = "⬇️ 模型下載中，請稍候..."
+            return
+        }
+
         if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             recordButton?.text = "❌ 請啟用麥克風權限"
             return

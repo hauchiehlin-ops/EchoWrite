@@ -5,9 +5,12 @@ pub mod asr;
 pub mod llm;
 pub mod formatter;
 pub mod database;
+pub mod models;
 pub mod ffi;
 #[cfg(target_os = "android")]
 pub mod jni;
+
+pub use models::{ModelDownloadState, ModelKind, ModelProgress};
 
 use std::sync::Mutex;
 use lazy_static::lazy_static;
@@ -37,15 +40,40 @@ lazy_static! {
     });
 }
 
+/// 初始化核心。`whisper_path` / `llm_path` 可省略（傳 `None`）：
+/// 省略時會自動嘗試解析本地模型目錄（`~/.echowrite/models`，或
+/// `ECHOWRITE_MODEL_DIR` 指定的共享容器路徑）下是否已有模型檔案。
+/// 若模型尚未下載，初始化仍會成功，但呼叫端須先透過
+/// `start_model_download` 下載完成，否則後續的轉寫/潤飾呼叫會回傳
+/// `ProcessError`（訊息含 "not ready"）提示尚未就緒。
 #[uniffi::export]
-pub fn initialize(whisper_path: String, llm_path: String) -> Result<(), EchoWriteError> {
+pub fn initialize(whisper_path: Option<String>, llm_path: Option<String>) -> Result<(), EchoWriteError> {
     let mut state = STATE.lock().map_err(|e| EchoWriteError::InitError { message: e.to_string() })?;
-    state.whisper_model_path = Some(whisper_path);
-    state.llm_model_path = Some(llm_path);
-    
+    state.whisper_model_path = whisper_path.or_else(|| models::default_model_path(models::ModelKind::Whisper));
+    state.llm_model_path = llm_path.or_else(|| models::default_model_path(models::ModelKind::Llm));
+
     // 初始化 SQLite 資料庫
     database::init_db().map_err(|e| EchoWriteError::InitError { message: e.to_string() })?;
     Ok(())
+}
+
+/// 檢查指定模型是否已存在於本地（不觸發下載）。
+#[uniffi::export]
+pub fn is_model_ready(kind: models::ModelKind) -> bool {
+    models::is_model_ready(kind)
+}
+
+/// 啟動背景執行緒下載指定模型。非同步、立即返回；
+/// 呼叫端應以 `get_model_download_progress` 輪詢進度（例如每 200ms）。
+#[uniffi::export]
+pub fn start_model_download(kind: models::ModelKind) {
+    models::start_download(kind);
+}
+
+/// 取得指定模型目前的下載進度／狀態。
+#[uniffi::export]
+pub fn get_model_download_progress(kind: models::ModelKind) -> models::ModelProgress {
+    models::get_progress(kind)
 }
 
 #[uniffi::export]
@@ -72,11 +100,9 @@ pub fn stop_recording_and_process(style: String) -> Result<String, EchoWriteErro
         let audio_path = audio::stop_audio_capture()
             .map_err(|e| EchoWriteError::ProcessError { message: e })?;
         
-        let whisper_model = state.whisper_model_path.clone()
-            .ok_or_else(|| EchoWriteError::ProcessError { message: "Whisper model not initialized".to_string() })?;
-        let llm_model = state.llm_model_path.clone()
-            .ok_or_else(|| EchoWriteError::ProcessError { message: "LLM model not initialized".to_string() })?;
-            
+        let whisper_model = resolve_model_path(state.whisper_model_path.clone(), models::ModelKind::Whisper)?;
+        let llm_model = resolve_model_path(state.llm_model_path.clone(), models::ModelKind::Llm)?;
+
         (audio_path, whisper_model, llm_model)
     }; // 此處 Mutex 鎖自動釋放！
 
@@ -87,14 +113,23 @@ pub fn stop_recording_and_process(style: String) -> Result<String, EchoWriteErro
 pub fn process_audio_file(audio_path: String, style: String) -> Result<String, EchoWriteError> {
     let (whisper_model, llm_model) = {
         let state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
-        let whisper_model = state.whisper_model_path.clone()
-            .ok_or_else(|| EchoWriteError::ProcessError { message: "Whisper model not initialized".to_string() })?;
-        let llm_model = state.llm_model_path.clone()
-            .ok_or_else(|| EchoWriteError::ProcessError { message: "LLM model not initialized".to_string() })?;
+        let whisper_model = resolve_model_path(state.whisper_model_path.clone(), models::ModelKind::Whisper)?;
+        let llm_model = resolve_model_path(state.llm_model_path.clone(), models::ModelKind::Llm)?;
         (whisper_model, llm_model)
     };
 
     process_audio_file_internal(audio_path, style, whisper_model, llm_model)
+}
+
+/// 優先使用初始化時已解析的路徑；若當時尚未就緒，重新檢查一次
+/// （處理「initialize 時模型還沒下載完，但現在下載完成了」的情況）。
+fn resolve_model_path(cached: Option<String>, kind: models::ModelKind) -> Result<String, EchoWriteError> {
+    if let Some(path) = cached {
+        return Ok(path);
+    }
+    models::default_model_path(kind).ok_or_else(|| EchoWriteError::ProcessError {
+        message: format!("Model not ready: {:?}. Call start_model_download first.", kind),
+    })
 }
 
 #[uniffi::export]

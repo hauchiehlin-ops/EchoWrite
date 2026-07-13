@@ -256,14 +256,29 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureStr
 RustBuffer uniffi_echowrite_core_fn_func_format_only(RustBuffer text, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_GET_MODEL_DOWNLOAD_PROGRESS
+#define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_GET_MODEL_DOWNLOAD_PROGRESS
+RustBuffer uniffi_echowrite_core_fn_func_get_model_download_progress(RustBuffer kind, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_INITIALIZE
 #define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_INITIALIZE
 void uniffi_echowrite_core_fn_func_initialize(RustBuffer whisper_path, RustBuffer llm_path, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_IS_MODEL_READY
+#define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_IS_MODEL_READY
+int8_t uniffi_echowrite_core_fn_func_is_model_ready(RustBuffer kind, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_PROCESS_AUDIO_FILE
 #define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_PROCESS_AUDIO_FILE
 RustBuffer uniffi_echowrite_core_fn_func_process_audio_file(RustBuffer audio_path, RustBuffer style, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_START_MODEL_DOWNLOAD
+#define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_START_MODEL_DOWNLOAD
+void uniffi_echowrite_core_fn_func_start_model_download(RustBuffer kind, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_FN_FUNC_START_RECORDING
@@ -563,15 +578,33 @@ uint16_t uniffi_echowrite_core_checksum_func_format_only(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_GET_MODEL_DOWNLOAD_PROGRESS
+#define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_GET_MODEL_DOWNLOAD_PROGRESS
+uint16_t uniffi_echowrite_core_checksum_func_get_model_download_progress(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_INITIALIZE
 #define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_INITIALIZE
 uint16_t uniffi_echowrite_core_checksum_func_initialize(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_IS_MODEL_READY
+#define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_IS_MODEL_READY
+uint16_t uniffi_echowrite_core_checksum_func_is_model_ready(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_PROCESS_AUDIO_FILE
 #define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_PROCESS_AUDIO_FILE
 uint16_t uniffi_echowrite_core_checksum_func_process_audio_file(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_START_MODEL_DOWNLOAD
+#define UNIFFI_FFIDEF_UNIFFI_ECHOWRITE_CORE_CHECKSUM_FUNC_START_MODEL_DOWNLOAD
+uint16_t uniffi_echowrite_core_checksum_func_start_model_download(void
     
 );
 #endif

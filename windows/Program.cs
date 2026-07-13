@@ -27,6 +27,25 @@ namespace EchoWrite
         [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
         private static extern void echowrite_free_string(IntPtr ptr);
 
+        // 0 = Whisper, 1 = Llm
+        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int echowrite_is_model_ready(int kind);
+
+        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void echowrite_start_model_download(int kind);
+
+        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void echowrite_get_model_download_progress(
+            int kind, out ulong downloaded, out ulong total, out int state);
+
+        private const int ModelKindWhisper = 0;
+        private const int ModelKindLlm = 1;
+        private const int ModelStateReady = 3;
+        private const int ModelStateFailed = 4;
+
+        private static bool _modelsReady = false;
+        private static System.Windows.Forms.Timer _modelDownloadTimer;
+
         // Windows API: 用於模擬鍵盤輸入與全域快捷鍵
         [DllImport("user32.dll")]
         private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -40,13 +59,12 @@ namespace EchoWrite
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            // 1. 初始化本地 Rust 核心引擎
-            string whisperModel = AppDomain.CurrentDomain.BaseDirectory + "models\\whisper-medium-q5.bin";
-            string llmModel = AppDomain.CurrentDomain.BaseDirectory + "models\\qwen-2.5-7b-q4.gguf";
-            int initResult = echowrite_initialize(whisperModel, llmModel);
+            // 1. 初始化本地 Rust 核心引擎。傳入空字串，交由 Rust 端自動解析
+            //    使用者本機 ~/.echowrite/models 目錄下已下載的模型。
+            int initResult = echowrite_initialize("", "");
             if (initResult != 0)
             {
-                MessageBox.Show("EchoWrite 核心初始化失敗，請確認模型檔案是否存在。", "EchoWrite", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("EchoWrite 核心初始化失敗。", "EchoWrite", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
@@ -54,7 +72,7 @@ namespace EchoWrite
             _trayIcon = new NotifyIcon()
             {
                 Icon = System.Drawing.SystemIcons.Application,
-                Text = "EchoWrite - 按 Alt + S 開始錄音",
+                Text = "EchoWrite - 準備中...",
                 Visible = true
             };
             _trayIcon.Click += TrayIcon_Click;
@@ -63,7 +81,57 @@ namespace EchoWrite
             var form = new KeyHandlerForm();
             RegisterHotKey(form.Handle, 1, 0x0001, 0x53); // MOD_ALT = 0x0001, S = 0x53
 
+            // 4. 確認模型是否就緒，缺少的話啟動背景下載並輪詢進度
+            EnsureModelsReady();
+
             Application.Run(form);
+        }
+
+        private static void EnsureModelsReady()
+        {
+            bool whisperReady = echowrite_is_model_ready(ModelKindWhisper) == 1;
+            bool llmReady = echowrite_is_model_ready(ModelKindLlm) == 1;
+
+            if (whisperReady && llmReady)
+            {
+                _modelsReady = true;
+                _trayIcon.Text = "EchoWrite - 按 Alt + S 開始錄音";
+                return;
+            }
+
+            _modelsReady = false;
+            _trayIcon.Text = "EchoWrite - 下載模型中...";
+            if (!whisperReady) echowrite_start_model_download(ModelKindWhisper);
+            if (!llmReady) echowrite_start_model_download(ModelKindLlm);
+
+            _modelDownloadTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _modelDownloadTimer.Tick += (sender, e) =>
+            {
+                echowrite_get_model_download_progress(ModelKindWhisper, out ulong wDown, out ulong wTotal, out int wState);
+                echowrite_get_model_download_progress(ModelKindLlm, out ulong lDown, out ulong lTotal, out int lState);
+
+                if (wState == ModelStateFailed || lState == ModelStateFailed)
+                {
+                    _trayIcon.Text = "EchoWrite - 模型下載失敗";
+                    _trayIcon.ShowBalloonTip(5000, "EchoWrite", "模型下載失敗，請檢查網路連線後重新啟動應用程式。", ToolTipIcon.Error);
+                    _modelDownloadTimer.Stop();
+                    return;
+                }
+
+                if (wState == ModelStateReady && lState == ModelStateReady)
+                {
+                    _modelsReady = true;
+                    _trayIcon.Text = "EchoWrite - 按 Alt + S 開始錄音";
+                    _modelDownloadTimer.Stop();
+                    return;
+                }
+
+                ulong downloaded = wDown + lDown;
+                ulong total = Math.Max(wTotal + lTotal, 1);
+                int percent = (int)(downloaded * 100 / total);
+                _trayIcon.Text = $"EchoWrite - 下載模型中... {percent}%";
+            };
+            _modelDownloadTimer.Start();
         }
 
         private static void TrayIcon_Click(object sender, EventArgs e)
@@ -85,6 +153,12 @@ namespace EchoWrite
 
         private static void StartRecording()
         {
+            if (!_modelsReady)
+            {
+                _trayIcon.ShowBalloonTip(3000, "EchoWrite", "模型仍在下載中，請稍候片刻再試一次。", ToolTipIcon.Info);
+                return;
+            }
+
             int result = echowrite_start_recording();
             if (result != 0)
             {

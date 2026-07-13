@@ -1,4 +1,8 @@
-use crate::{initialize, process_audio_file, start_recording, stop_recording_and_process};
+use crate::models::ModelKind;
+use crate::{
+    get_model_download_progress, initialize, is_model_ready, process_audio_file, start_model_download,
+    start_recording, stop_recording_and_process,
+};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 
@@ -14,20 +18,79 @@ fn into_raw_c_string(text: String) -> *mut c_char {
     CString::new(text).unwrap_or_else(|_| CString::new("").unwrap()).into_raw()
 }
 
+// 0 = 有效路徑字串傳入即視為指定路徑；空字串或 null 視為「自動解析本地模型目錄」。
+fn opt_str_from_ptr(ptr: *const c_char) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+    match str_from_ptr(ptr) {
+        Ok(s) if !s.is_empty() => Some(s),
+        _ => None,
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn echowrite_initialize(whisper_path: *const c_char, llm_path: *const c_char) -> c_int {
-    let whisper_path = match str_from_ptr(whisper_path) {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
-    let llm_path = match str_from_ptr(llm_path) {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
+    let whisper_path = opt_str_from_ptr(whisper_path);
+    let llm_path = opt_str_from_ptr(llm_path);
 
     match initialize(whisper_path, llm_path) {
         Ok(_) => 0,
         Err(_) => 3,
+    }
+}
+
+fn model_kind_from_c_int(kind: c_int) -> ModelKind {
+    if kind == 1 {
+        ModelKind::Llm
+    } else {
+        ModelKind::Whisper
+    }
+}
+
+/// 檢查模型是否已存在本地（0 = Whisper, 1 = Llm）。回傳 1 = 就緒, 0 = 未就緒。
+#[no_mangle]
+pub extern "C" fn echowrite_is_model_ready(kind: c_int) -> c_int {
+    if is_model_ready(model_kind_from_c_int(kind)) {
+        1
+    } else {
+        0
+    }
+}
+
+/// 啟動背景下載（非同步，立即返回）。
+#[no_mangle]
+pub extern "C" fn echowrite_start_model_download(kind: c_int) {
+    start_model_download(model_kind_from_c_int(kind));
+}
+
+/// 取得下載進度。透過輸出參數回傳，避免跨語言結構體 ABI 對齊問題。
+/// `state_out`: 0=NotStarted 1=Downloading 2=Verifying 3=Ready 4=Failed
+#[no_mangle]
+pub extern "C" fn echowrite_get_model_download_progress(
+    kind: c_int,
+    downloaded_out: *mut u64,
+    total_out: *mut u64,
+    state_out: *mut c_int,
+) {
+    let progress = get_model_download_progress(model_kind_from_c_int(kind));
+    let state_code = match progress.state {
+        crate::ModelDownloadState::NotStarted => 0,
+        crate::ModelDownloadState::Downloading => 1,
+        crate::ModelDownloadState::Verifying => 2,
+        crate::ModelDownloadState::Ready => 3,
+        crate::ModelDownloadState::Failed => 4,
+    };
+    unsafe {
+        if !downloaded_out.is_null() {
+            *downloaded_out = progress.downloaded_bytes;
+        }
+        if !total_out.is_null() {
+            *total_out = progress.total_bytes;
+        }
+        if !state_out.is_null() {
+            *state_out = state_code;
+        }
     }
 }
 

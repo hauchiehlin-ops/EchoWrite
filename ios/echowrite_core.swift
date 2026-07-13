@@ -399,6 +399,46 @@ fileprivate class UniffiHandleMap<T> {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -435,6 +475,88 @@ fileprivate struct FfiConverterString: FfiConverter {
         writeInt(&buf, len)
         writeBytes(&buf, value.utf8)
     }
+}
+
+
+public struct ModelProgress {
+    public var downloadedBytes: UInt64
+    public var totalBytes: UInt64
+    public var state: ModelDownloadState
+    public var error: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(downloadedBytes: UInt64, totalBytes: UInt64, state: ModelDownloadState, error: String?) {
+        self.downloadedBytes = downloadedBytes
+        self.totalBytes = totalBytes
+        self.state = state
+        self.error = error
+    }
+}
+
+
+
+extension ModelProgress: Equatable, Hashable {
+    public static func ==(lhs: ModelProgress, rhs: ModelProgress) -> Bool {
+        if lhs.downloadedBytes != rhs.downloadedBytes {
+            return false
+        }
+        if lhs.totalBytes != rhs.totalBytes {
+            return false
+        }
+        if lhs.state != rhs.state {
+            return false
+        }
+        if lhs.error != rhs.error {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(downloadedBytes)
+        hasher.combine(totalBytes)
+        hasher.combine(state)
+        hasher.combine(error)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelProgress: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelProgress {
+        return
+            try ModelProgress(
+                downloadedBytes: FfiConverterUInt64.read(from: &buf), 
+                totalBytes: FfiConverterUInt64.read(from: &buf), 
+                state: FfiConverterTypeModelDownloadState.read(from: &buf), 
+                error: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ModelProgress, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.downloadedBytes, into: &buf)
+        FfiConverterUInt64.write(value.totalBytes, into: &buf)
+        FfiConverterTypeModelDownloadState.write(value.state, into: &buf)
+        FfiConverterOptionString.write(value.error, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelProgress_lift(_ buf: RustBuffer) throws -> ModelProgress {
+    return try FfiConverterTypeModelProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelProgress_lower(_ value: ModelProgress) -> RustBuffer {
+    return FfiConverterTypeModelProgress.lower(value)
 }
 
 
@@ -511,6 +633,179 @@ extension EchoWriteError: Foundation.LocalizedError {
         String(reflecting: self)
     }
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum ModelDownloadState {
+    
+    case notStarted
+    case downloading
+    case verifying
+    case ready
+    case failed
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelDownloadState: FfiConverterRustBuffer {
+    typealias SwiftType = ModelDownloadState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelDownloadState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .notStarted
+        
+        case 2: return .downloading
+        
+        case 3: return .verifying
+        
+        case 4: return .ready
+        
+        case 5: return .failed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ModelDownloadState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .notStarted:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .downloading:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .verifying:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .ready:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelDownloadState_lift(_ buf: RustBuffer) throws -> ModelDownloadState {
+    return try FfiConverterTypeModelDownloadState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelDownloadState_lower(_ value: ModelDownloadState) -> RustBuffer {
+    return FfiConverterTypeModelDownloadState.lower(value)
+}
+
+
+
+extension ModelDownloadState: Equatable, Hashable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum ModelKind {
+    
+    case whisper
+    case llm
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelKind: FfiConverterRustBuffer {
+    typealias SwiftType = ModelKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .whisper
+        
+        case 2: return .llm
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ModelKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .whisper:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .llm:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelKind_lift(_ buf: RustBuffer) throws -> ModelKind {
+    return try FfiConverterTypeModelKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelKind_lower(_ value: ModelKind) -> RustBuffer {
+    return FfiConverterTypeModelKind.lower(value)
+}
+
+
+
+extension ModelKind: Equatable, Hashable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
 public func formatOnly(text: String) -> String {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_echowrite_core_fn_func_format_only(
@@ -518,12 +813,40 @@ public func formatOnly(text: String) -> String {
     )
 })
 }
-public func initialize(whisperPath: String, llmPath: String)throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+/**
+ * 取得指定模型目前的下載進度／狀態。
+ */
+public func getModelDownloadProgress(kind: ModelKind) -> ModelProgress {
+    return try!  FfiConverterTypeModelProgress.lift(try! rustCall() {
+    uniffi_echowrite_core_fn_func_get_model_download_progress(
+        FfiConverterTypeModelKind.lower(kind),$0
+    )
+})
+}
+/**
+ * 初始化核心。`whisper_path` / `llm_path` 可省略（傳 `None`）：
+ * 省略時會自動嘗試解析本地模型目錄（`~/.echowrite/models`，或
+ * `ECHOWRITE_MODEL_DIR` 指定的共享容器路徑）下是否已有模型檔案。
+ * 若模型尚未下載，初始化仍會成功，但呼叫端須先透過
+ * `start_model_download` 下載完成，否則後續的轉寫/潤飾呼叫會回傳
+ * `ProcessError`（訊息含 "not ready"）提示尚未就緒。
+ */
+public func initialize(whisperPath: String?, llmPath: String?)throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
     uniffi_echowrite_core_fn_func_initialize(
-        FfiConverterString.lower(whisperPath),
-        FfiConverterString.lower(llmPath),$0
+        FfiConverterOptionString.lower(whisperPath),
+        FfiConverterOptionString.lower(llmPath),$0
     )
 }
+}
+/**
+ * 檢查指定模型是否已存在於本地（不觸發下載）。
+ */
+public func isModelReady(kind: ModelKind) -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_echowrite_core_fn_func_is_model_ready(
+        FfiConverterTypeModelKind.lower(kind),$0
+    )
+})
 }
 public func processAudioFile(audioPath: String, style: String)throws  -> String {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
@@ -532,6 +855,16 @@ public func processAudioFile(audioPath: String, style: String)throws  -> String 
         FfiConverterString.lower(style),$0
     )
 })
+}
+/**
+ * 啟動背景執行緒下載指定模型。非同步、立即返回；
+ * 呼叫端應以 `get_model_download_progress` 輪詢進度（例如每 200ms）。
+ */
+public func startModelDownload(kind: ModelKind) {try! rustCall() {
+    uniffi_echowrite_core_fn_func_start_model_download(
+        FfiConverterTypeModelKind.lower(kind),$0
+    )
+}
 }
 public func startRecording()throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
     uniffi_echowrite_core_fn_func_start_recording($0
@@ -564,10 +897,19 @@ private var initializationResult: InitializationResult = {
     if (uniffi_echowrite_core_checksum_func_format_only() != 9783) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_echowrite_core_checksum_func_initialize() != 37740) {
+    if (uniffi_echowrite_core_checksum_func_get_model_download_progress() != 25627) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_initialize() != 43838) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_is_model_ready() != 52597) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_process_audio_file() != 39260) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_start_model_download() != 33259) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_start_recording() != 2237) {
