@@ -10,6 +10,8 @@ echo "=== 開始編譯 iOS 專用 Rust 核心庫 (echowrite-core) ==="
 rustup target add aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim
 
 # 2. 開始交叉編譯 Rust 二進位檔案 (Release 模式)
+export IPHONEOS_DEPLOYMENT_TARGET=17.0
+export MACOSX_DEPLOYMENT_TARGET=14.0
 echo "--- 正在為 iPhone 實體機 (aarch64-apple-ios) 進行編譯 ---"
 cargo build --release --manifest-path ../core/Cargo.toml --target aarch64-apple-ios
 
