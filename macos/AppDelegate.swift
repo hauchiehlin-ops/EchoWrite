@@ -112,9 +112,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 狀態與風格
         let statusTitle = modelsReady ? "🟢 核心狀態：已就緒" : "⏳ 核心狀態：模型下載中..."
-        let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
-        statusItem.isEnabled = false
-        menu.addItem(statusItem)
+        let statusHeaderItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+        statusHeaderItem.isEnabled = false
+        menu.addItem(statusHeaderItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -144,8 +144,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "🚪 結束 EchoWrite", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
-        statusItem?.menu = menu
-        statusItem?.button?.performClick(nil)
+        self.statusItem?.menu = menu
+        self.statusItem?.button?.performClick(nil)
         // 彈出後清空 menu 避免後續左鍵點擊失效
         DispatchQueue.main.async {
             self.statusItem?.menu = nil
