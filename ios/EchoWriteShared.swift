@@ -1,3 +1,5 @@
+import Foundation
+
 enum EchoWriteStyle: String, CaseIterable, Identifiable {
     case casual = "casual"
     case formal = "formal"
@@ -101,8 +103,8 @@ enum EchoWriteShared {
     /// 讀取當前選取的風格，預設為 casual
     static func getSelectedStyle() -> EchoWriteStyle {
         guard let styleURL = sharedStyleURL,
-              let raw = try? String(contentsOf: styleURL, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let style = EchoWriteStyle(rawValue: raw) else {
+              let content = try? String(contentsOf: styleURL, encoding: .utf8),
+              let style = EchoWriteStyle(rawValue: content.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return .casual
         }
         return style

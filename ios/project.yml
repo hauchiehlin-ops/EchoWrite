@@ -9,7 +9,8 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1,2"
     CODE_SIGN_STYLE: Automatic
-    OTHER_LDFLAGS: "-ObjC"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
     ECHOWRITE_IOS_APP_BUNDLE_ID: com.echowrite.app
     ECHOWRITE_IOS_KEYBOARD_BUNDLE_ID: com.echowrite.app.keyboard
 

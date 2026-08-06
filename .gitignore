@@ -22,3 +22,7 @@ android/build/
 android/app/build/
 android/app/src/main/jniLibs/
 *.so
+
+# iOS build caches
+ios/build/
+

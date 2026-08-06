@@ -399,6 +399,22 @@ fileprivate class UniffiHandleMap<T> {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     typealias FfiType = UInt64
     typealias SwiftType = UInt64
@@ -408,6 +424,22 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     }
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
+    typealias FfiType = Int64
+    typealias SwiftType = Int64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int64, into buf: inout [UInt8]) {
         writeInt(&buf, lower(value))
     }
 }
@@ -475,6 +507,80 @@ fileprivate struct FfiConverterString: FfiConverter {
         writeInt(&buf, len)
         writeBytes(&buf, value.utf8)
     }
+}
+
+
+public struct HistoryRecord {
+    public var id: Int64
+    public var timestamp: String
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, timestamp: String, text: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.text = text
+    }
+}
+
+
+
+extension HistoryRecord: Equatable, Hashable {
+    public static func ==(lhs: HistoryRecord, rhs: HistoryRecord) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.timestamp != rhs.timestamp {
+            return false
+        }
+        if lhs.text != rhs.text {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(timestamp)
+        hasher.combine(text)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHistoryRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryRecord {
+        return
+            try HistoryRecord(
+                id: FfiConverterInt64.read(from: &buf), 
+                timestamp: FfiConverterString.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HistoryRecord, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.timestamp, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryRecord_lift(_ buf: RustBuffer) throws -> HistoryRecord {
+    return try FfiConverterTypeHistoryRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryRecord_lower(_ value: HistoryRecord) -> RustBuffer {
+    return FfiConverterTypeHistoryRecord.lower(value)
 }
 
 
@@ -783,6 +889,70 @@ extension ModelKind: Equatable, Hashable {}
 
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum ModelProfile {
+    
+    case turbo
+    case pro
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelProfile: FfiConverterRustBuffer {
+    typealias SwiftType = ModelProfile
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelProfile {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .turbo
+        
+        case 2: return .pro
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ModelProfile, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .turbo:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .pro:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelProfile_lift(_ buf: RustBuffer) throws -> ModelProfile {
+    return try FfiConverterTypeModelProfile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelProfile_lower(_ value: ModelProfile) -> RustBuffer {
+    return FfiConverterTypeModelProfile.lower(value)
+}
+
+
+
+extension ModelProfile: Equatable, Hashable {}
+
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -831,15 +1001,91 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeHistoryRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [HistoryRecord]
+
+    public static func write(_ value: [HistoryRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeHistoryRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [HistoryRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [HistoryRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeHistoryRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
 /**
- * 新增一個自訂詞彙（人名、產品名、公司名等），之後的語音辨識會優先套用，
- * 降低同音字誤判機率（詳見 `asr::transcribe` 的 initial prompt 用法）。
+ * 新增一個自訂詞彙（人名、產品名、公司名等），之後的語音辨識會優先套用
  */
 public func addCustomVocabulary(phrase: String)throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
     uniffi_echowrite_core_fn_func_add_custom_vocabulary(
         FfiConverterString.lower(phrase),$0
     )
 }
+}
+/**
+ * 新增個人口吻風格範例
+ */
+public func addPersonalToneSample(sampleText: String)throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_add_personal_tone_sample(
+        FfiConverterString.lower(sampleText),$0
+    )
+}
+}
+/**
+ * 清空個人口吻風格範例
+ */
+public func clearPersonalToneSamples()throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_clear_personal_tone_samples($0
+    )
+}
+}
+/**
+ * 清空所有歷史紀錄。
+ */
+public func clearTranscriptionHistory()throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_clear_transcription_history($0
+    )
+}
+}
+/**
+ * 刪除指定的自訂詞彙。
+ */
+public func deleteCustomVocabulary(phrase: String)throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_delete_custom_vocabulary(
+        FfiConverterString.lower(phrase),$0
+    )
+}
+}
+/**
+ * 刪除單筆歷史紀錄。
+ */
+public func deleteHistoryItem(id: Int64)throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_delete_history_item(
+        FfiConverterInt64.lower(id),$0
+    )
+}
+}
+/**
+ * 零雲端詞庫與風格同步資料匯出（JSON 字串）
+ */
+public func exportSyncData()throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_export_sync_data($0
+    )
+})
 }
 public func formatOnly(text: String) -> String {
     return try!  FfiConverterString.lift(try! rustCall() {
@@ -864,6 +1110,54 @@ public func getModelDownloadProgress(kind: ModelKind) -> ModelProgress {
     return try!  FfiConverterTypeModelProgress.lift(try! rustCall() {
     uniffi_echowrite_core_fn_func_get_model_download_progress(
         FfiConverterTypeModelKind.lower(kind),$0
+    )
+})
+}
+/**
+ * 取得目前的模型效能分級
+ */
+public func getModelProfile() -> ModelProfile {
+    return try!  FfiConverterTypeModelProfile.lift(try! rustCall() {
+    uniffi_echowrite_core_fn_func_get_model_profile($0
+    )
+})
+}
+/**
+ * 取得個人口吻風格範例
+ */
+public func getPersonalToneSamples()throws  -> [String] {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_get_personal_tone_samples($0
+    )
+})
+}
+/**
+ * 取得指定風格的 Prompt 內容說明。
+ */
+public func getStylePromptPreview(style: String) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_echowrite_core_fn_func_get_style_prompt_preview(
+        FfiConverterString.lower(style),$0
+    )
+})
+}
+/**
+ * 取得最近的轉寫歷史紀錄。
+ */
+public func getTranscriptionHistory(limit: UInt32)throws  -> [HistoryRecord] {
+    return try  FfiConverterSequenceTypeHistoryRecord.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_get_transcription_history(
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+/**
+ * 零雲端詞庫與風格同步資料匯入（傳入 JSON 字串，回傳匯入成功的筆數）
+ */
+public func importSyncData(jsonStr: String)throws  -> UInt32 {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_import_sync_data(
+        FfiConverterString.lower(jsonStr),$0
     )
 })
 }
@@ -900,6 +1194,24 @@ public func processAudioFile(audioPath: String, style: String)throws  -> String 
     )
 })
 }
+public func processAudioFileWithContext(audioPath: String, style: String, contextBefore: String?)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_process_audio_file_with_context(
+        FfiConverterString.lower(audioPath),
+        FfiConverterString.lower(style),
+        FfiConverterOptionString.lower(contextBefore),$0
+    )
+})
+}
+/**
+ * 設定模型效能分級（Turbo: 200ms 極速 / Pro: 旗艦高精度）
+ */
+public func setModelProfile(profile: ModelProfile) {try! rustCall() {
+    uniffi_echowrite_core_fn_func_set_model_profile(
+        FfiConverterTypeModelProfile.lower(profile),$0
+    )
+}
+}
 /**
  * 啟動背景執行緒下載指定模型。非同步、立即返回；
  * 呼叫端應以 `get_model_download_progress` 輪詢進度（例如每 200ms）。
@@ -922,6 +1234,14 @@ public func stopRecordingAndProcess(style: String)throws  -> String {
     )
 })
 }
+public func stopRecordingAndProcessWithContext(style: String, contextBefore: String?)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_stop_recording_and_process_with_context(
+        FfiConverterString.lower(style),
+        FfiConverterOptionString.lower(contextBefore),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -938,7 +1258,25 @@ private var initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_echowrite_core_checksum_func_add_custom_vocabulary() != 39138) {
+    if (uniffi_echowrite_core_checksum_func_add_custom_vocabulary() != 54639) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_add_personal_tone_sample() != 51331) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_clear_personal_tone_samples() != 32792) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_clear_transcription_history() != 16678) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_delete_custom_vocabulary() != 1348) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_delete_history_item() != 11072) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_export_sync_data() != 32881) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_format_only() != 9783) {
@@ -950,6 +1288,21 @@ private var initializationResult: InitializationResult = {
     if (uniffi_echowrite_core_checksum_func_get_model_download_progress() != 25627) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_echowrite_core_checksum_func_get_model_profile() != 11997) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_get_personal_tone_samples() != 9763) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_get_style_prompt_preview() != 6073) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_get_transcription_history() != 7701) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_import_sync_data() != 58878) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_echowrite_core_checksum_func_initialize() != 43838) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -959,6 +1312,12 @@ private var initializationResult: InitializationResult = {
     if (uniffi_echowrite_core_checksum_func_process_audio_file() != 39260) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_echowrite_core_checksum_func_process_audio_file_with_context() != 18449) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_set_model_profile() != 65015) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_echowrite_core_checksum_func_start_model_download() != 33259) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -966,6 +1325,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_stop_recording_and_process() != 58931) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_stop_recording_and_process_with_context() != 13418) {
         return InitializationResult.apiChecksumMismatch
     }
 

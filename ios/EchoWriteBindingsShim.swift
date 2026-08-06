@@ -15,8 +15,16 @@ func ewStopRecordingAndProcess(style: String) throws -> String {
     try stopRecordingAndProcess(style: style)
 }
 
+func ewStopRecordingAndProcessWithContext(style: String, contextBefore: String?) throws -> String {
+    try stopRecordingAndProcessWithContext(style: style, contextBefore: contextBefore)
+}
+
 func ewProcessAudioFile(audioPath: String, style: String) throws -> String {
     try processAudioFile(audioPath: audioPath, style: style)
+}
+
+func ewProcessAudioFileWithContext(audioPath: String, style: String, contextBefore: String?) throws -> String {
+    try processAudioFileWithContext(audioPath: audioPath, style: style, contextBefore: contextBefore)
 }
 
 func ewIsModelReady(kind: ModelKind) -> Bool {
@@ -30,3 +38,64 @@ func ewStartModelDownload(kind: ModelKind) {
 func ewGetModelDownloadProgress(kind: ModelKind) -> ModelProgress {
     getModelDownloadProgress(kind: kind)
 }
+
+func ewGetCustomVocabulary() throws -> [String] {
+    try getCustomVocabulary()
+}
+
+func ewAddCustomVocabulary(phrase: String) throws {
+    try addCustomVocabulary(phrase: phrase)
+}
+
+func ewDeleteCustomVocabulary(phrase: String) throws {
+    try deleteCustomVocabulary(phrase: phrase)
+}
+
+func ewGetPersonalToneSamples() throws -> [String] {
+    try getPersonalToneSamples()
+}
+
+func ewAddPersonalToneSample(sampleText: String) throws {
+    try addPersonalToneSample(sampleText: sampleText)
+}
+
+func ewClearPersonalToneSamples() throws {
+    try clearPersonalToneSamples()
+}
+
+func ewGetTranscriptionHistory(limit: UInt32) throws -> [HistoryRecord] {
+    try getTranscriptionHistory(limit: limit)
+}
+
+func ewDeleteHistoryItem(id: Int64) throws {
+    try deleteHistoryItem(id: id)
+}
+
+func ewClearTranscriptionHistory() throws {
+    try clearTranscriptionHistory()
+}
+
+func ewExportSyncData() throws -> String {
+    try exportSyncData()
+}
+
+func ewImportSyncData(jsonStr: String) throws -> UInt32 {
+    try importSyncData(jsonStr: jsonStr)
+}
+
+func ewGetModelProfile() -> ModelProfile {
+    getModelProfile()
+}
+
+func ewSetModelProfile(profile: ModelProfile) {
+    setModelProfile(profile: profile)
+}
+
+func ewGetStylePromptPreview(style: String) -> String {
+    getStylePromptPreview(style: style)
+}
+
+func ewFormatOnly(text: String) -> String {
+    formatOnly(text: text)
+}
+
