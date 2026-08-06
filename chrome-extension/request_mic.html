@@ -64,6 +64,18 @@
       line-height: 1.6;
       margin-bottom: 30px;
     }
+    .device-list {
+      text-align: left;
+      color: #cbd5e1;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: -12px 0 22px;
+      min-height: 22px;
+    }
     .btn {
       background: var(--accent-color);
       border: none;
@@ -97,6 +109,7 @@
     <div class="icon">🎤</div>
     <h2>啟用麥克風授權</h2>
     <p>EchoWrite 是一款完全在您本機運行的 AI 語音助理。請點擊下方按鈕以允許瀏覽器存取您的麥克風。</p>
+    <div class="device-list" id="deviceList">正在檢查麥克風裝置...</div>
     <button class="btn" id="grantBtn">點擊授權麥克風</button>
   </div>
   <script src="request_mic.js"></script>

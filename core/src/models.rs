@@ -28,12 +28,33 @@ pub enum ModelDownloadState {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ModelProfile {
+    Turbo,
+    Pro,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ModelProgress {
     pub downloaded_bytes: u64,
     pub total_bytes: u64,
     pub state: ModelDownloadState,
     pub error: Option<String>,
+}
+
+lazy_static! {
+    static ref ACTIVE_PROFILE: Mutex<ModelProfile> = Mutex::new(ModelProfile::Turbo);
+    static ref PROGRESS: Mutex<HashMap<ModelKind, ModelProgress>> = Mutex::new(HashMap::new());
+}
+
+pub fn set_model_profile(profile: ModelProfile) {
+    if let Ok(mut p) = ACTIVE_PROFILE.lock() {
+        *p = profile;
+    }
+}
+
+pub fn get_model_profile() -> ModelProfile {
+    ACTIVE_PROFILE.lock().map(|p| *p).unwrap_or(ModelProfile::Turbo)
 }
 
 struct ModelSpec {
@@ -50,8 +71,9 @@ struct ModelSpec {
 }
 
 fn spec_for(kind: ModelKind) -> ModelSpec {
-    match kind {
-        ModelKind::Whisper => ModelSpec {
+    let profile = get_model_profile();
+    match (kind, profile) {
+        (ModelKind::Whisper, ModelProfile::Turbo) => ModelSpec {
             filename: "ggml-base-q5_1.bin",
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin",
             sha256: None,
@@ -59,9 +81,23 @@ fn spec_for(kind: ModelKind) -> ModelSpec {
                 "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-encoder.mlmodelc.zip",
             ),
         },
-        ModelKind::Llm => ModelSpec {
+        (ModelKind::Whisper, ModelProfile::Pro) => ModelSpec {
+            filename: "ggml-small-q5_1.bin",
+            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
+            sha256: None,
+            coreml_encoder_url: Some(
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-encoder.mlmodelc.zip",
+            ),
+        },
+        (ModelKind::Llm, ModelProfile::Turbo) => ModelSpec {
             filename: "qwen2.5-0.5b-instruct-q5_k_m.gguf",
             url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q5_k_m.gguf",
+            coreml_encoder_url: None,
+            sha256: None,
+        },
+        (ModelKind::Llm, ModelProfile::Pro) => ModelSpec {
+            filename: "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+            url: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
             coreml_encoder_url: None,
             sha256: None,
         },
@@ -102,9 +138,7 @@ pub fn default_model_path(kind: ModelKind) -> Option<String> {
     }
 }
 
-lazy_static! {
-    static ref PROGRESS: Mutex<HashMap<ModelKind, ModelProgress>> = Mutex::new(HashMap::new());
-}
+
 
 fn set_progress(kind: ModelKind, progress: ModelProgress) {
     if let Ok(mut map) = PROGRESS.lock() {

@@ -2,9 +2,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
 
 #echowrite-floating-button {
-  position: fixed;
-  right: 28px;
-  bottom: 28px;
+  position: fixed !important;
+  right: 30px !important;
+  bottom: 30px !important;
+  left: auto !important;
+  top: auto !important;
   z-index: 2147483646;
   width: 72px;
   height: 72px;

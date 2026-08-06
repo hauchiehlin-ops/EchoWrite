@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "EchoWrite - Local AI Voice Input",
-  "version": "1.0.0",
+  "version": "1.2.1",
   "description": "本地端 AI 語音重組輸入法。說話完畢後自動進行台灣在地化語氣潤飾與智慧排版。",
   "permissions": [
     "storage",

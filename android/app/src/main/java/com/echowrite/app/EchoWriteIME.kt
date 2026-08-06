@@ -1,57 +1,81 @@
 package com.echowrite.app
 
+import android.content.Context
+import android.graphics.Color
 import android.inputmethodservice.InputMethodService
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.MotionEvent
 import android.view.View
-import android.view.inputmethod.InputConnection
 import android.widget.Button
+import android.widget.TextView
+import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
+import kotlin.math.sqrt
 
+/**
+ * EchoWrite Android 高辨識度 AI 輸入法
+ * 特色：
+ * 1. 頂部狀態列（AI 雙引擎狀態、即時秒數計時、NPU 離線加速標誌）。
+ * 2. 5 大語意風格一鍵膠囊切換（極簡、公文、Email、雙語、重點）。
+ * 3. 即時聲波波形動態視覺化 (Waveform Visualizer)。
+ * 4. 樂觀串流排版 (Optimistic Streaming Typing - setComposingText -> commitText)。
+ * 5. 滑動取消手勢與防呆捨棄。
+ */
 class EchoWriteIME : InputMethodService() {
     private var isRecording = false
     private var recordButton: Button? = null
+    private var statusText: TextView? = null
+    private var previewText: TextView? = null
+    private var timerText: TextView? = null
+    private var swipeHintText: TextView? = null
+    private var waveformView: WaveformVisualizerView? = null
+
+    private val styleButtons = mutableMapOf<EchoWriteStyle, TextView>()
+    private var currentStyle = EchoWriteStyle.CASUAL
+
     private var audioRecord: AudioRecord? = null
     private var tempAudioFile: File? = null
     private var modelsReady = false
-    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var progressPoller: Runnable? = null
+    private var timerRunnable: Runnable? = null
+    private var recordingSeconds = 0
 
-    // 錄音中「往左滑動取消」手勢狀態
+    // 滑動取消手勢
     private var swipeStartX = 0f
     private var isDraggingToCancel = false
 
-    companion object {
-        const val MODEL_KIND_WHISPER = 0
-        const val MODEL_KIND_LLM = 1
-        const val MODEL_STATE_READY = 3
-        const val MODEL_STATE_FAILED = 4
-
-        init {
-            System.loadLibrary("echowrite_core")
-        }
-    }
-
-    // 空字串代表「未指定路徑」，交由 Rust 端自動解析本地模型目錄下已下載的模型。
-    private external fun initialize(whisperPath: String, llmPath: String): Boolean
-    private external fun processAudioFile(audioPath: String, style: String): String
-    private external fun isModelReady(kind: Int): Boolean
-    private external fun startModelDownload(kind: Int)
-    /** 回傳格式：`"state:downloaded:total"` */
-    private external fun getModelDownloadProgress(kind: Int): String
-
     override fun onCreateInputView(): View {
         val keyboardView = layoutInflater.inflate(R.layout.keyboard_layout, null)
+        
         recordButton = keyboardView.findViewById(R.id.btn_record)
+        statusText = keyboardView.findViewById(R.id.txt_status)
+        previewText = keyboardView.findViewById(R.id.txt_preview)
+        timerText = keyboardView.findViewById(R.id.txt_timer)
+        swipeHintText = keyboardView.findViewById(R.id.txt_swipe_hint)
+        waveformView = keyboardView.findViewById(R.id.waveform_view)
 
-        initialize("", "")
+        // 設定模型存放路徑環境變數
+        val modelsDir = File(filesDir, "models")
+        if (!modelsDir.exists()) modelsDir.mkdirs()
+
+        EchoWriteCore.initialize("", "")
         tempAudioFile = File(cacheDir, "temp_input.wav")
+        currentStyle = EchoWriteCore.getSelectedStyle(this)
+
+        bindStyleButtons(keyboardView)
+        updateStyleUI()
         ensureModelsReady()
 
         recordButton?.setOnClickListener {
@@ -62,24 +86,64 @@ class EchoWriteIME : InputMethodService() {
         return keyboardView
     }
 
-    // 錄音中往左滑動超過此距離即視為取消手勢，鏡射 iOS/Chrome 的取消錄音互動。
+    private fun bindStyleButtons(root: View) {
+        val styleViews = mapOf(
+            EchoWriteStyle.CASUAL to root.findViewById<TextView>(R.id.style_casual),
+            EchoWriteStyle.FORMAL to root.findViewById<TextView>(R.id.style_formal),
+            EchoWriteStyle.EMAIL to root.findViewById<TextView>(R.id.style_email),
+            EchoWriteStyle.BILINGUAL to root.findViewById<TextView>(R.id.style_bilingual),
+            EchoWriteStyle.BULLET to root.findViewById<TextView>(R.id.style_bullet)
+        )
+
+        for ((style, view) in styleViews) {
+            if (view != null) {
+                styleButtons[style] = view
+                view.setOnClickListener {
+                    currentStyle = style
+                    EchoWriteCore.setSelectedStyle(this, style)
+                    updateStyleUI()
+                }
+            }
+        }
+    }
+
+    private fun updateStyleUI() {
+        for ((style, view) in styleButtons) {
+            if (style == currentStyle) {
+                view.setBackgroundResource(R.drawable.capsule_selected_bg)
+                view.setTextColor(Color.parseColor("#00E5FF"))
+            } else {
+                view.setBackgroundResource(R.drawable.capsule_unselected_bg)
+                view.setTextColor(Color.parseColor("#9AA7BD"))
+            }
+        }
+    }
+
     private fun setupSwipeToCancel() {
-        val thresholdPx = 80 * resources.displayMetrics.density
-        val maxTranslationPx = 300 * resources.displayMetrics.density
+        val thresholdPx = 70 * resources.displayMetrics.density
+        val maxTranslationPx = 250 * resources.displayMetrics.density
 
         recordButton?.setOnTouchListener { view, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     swipeStartX = event.rawX
                     isDraggingToCancel = false
-                    false // 不消費，讓 Button 正常處理按下視覺效果
+                    false
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (isRecording) {
                         val dx = (event.rawX - swipeStartX).coerceAtMost(0f)
                         view.translationX = dx.coerceAtLeast(-maxTranslationPx)
-                        view.alpha = 1f - (-dx / maxTranslationPx).coerceIn(0f, 0.6f)
+                        view.alpha = 1f - (-dx / maxTranslationPx).coerceIn(0f, 0.5f)
                         isDraggingToCancel = -dx > thresholdPx
+
+                        if (isDraggingToCancel) {
+                            swipeHintText?.text = "⚠️ 放開以立即捨棄"
+                            swipeHintText?.setTextColor(Color.parseColor("#FF5E62"))
+                        } else {
+                            swipeHintText?.text = "◀ 錄音中向左滑動取消"
+                            swipeHintText?.setTextColor(Color.parseColor("#7384A6"))
+                        }
                     }
                     false
                 }
@@ -88,10 +152,10 @@ class EchoWriteIME : InputMethodService() {
                     if (isDraggingToCancel && isRecording) {
                         isDraggingToCancel = false
                         cancelRecording()
-                        true // 消費此次 UP，避免同時觸發 click 導致 toggleRecording() 又被呼叫
+                        true
                     } else {
                         isDraggingToCancel = false
-                        false // 一般點擊：交給 onClickListener 處理 toggleRecording()
+                        false
                     }
                 }
                 else -> false
@@ -100,42 +164,44 @@ class EchoWriteIME : InputMethodService() {
     }
 
     private fun ensureModelsReady() {
-        val whisperReady = isModelReady(MODEL_KIND_WHISPER)
-        val llmReady = isModelReady(MODEL_KIND_LLM)
+        val whisperReady = EchoWriteCore.isModelReady(EchoWriteCore.MODEL_KIND_WHISPER)
+        val llmReady = EchoWriteCore.isModelReady(EchoWriteCore.MODEL_KIND_LLM)
 
         if (whisperReady && llmReady) {
             modelsReady = true
-            recordButton?.text = "🎙️ 按下說話 (EchoWrite)"
+            setIdleState()
             return
         }
 
         modelsReady = false
-        recordButton?.text = "⬇️ 下載模型中..."
-        if (!whisperReady) startModelDownload(MODEL_KIND_WHISPER)
-        if (!llmReady) startModelDownload(MODEL_KIND_LLM)
+        recordButton?.text = "⬇️ EchoWrite 本地雙引擎下載中"
+        statusText?.text = "請保持連線，模型完成後即可完全離線辨識"
+        if (!whisperReady) EchoWriteCore.startModelDownload(EchoWriteCore.MODEL_KIND_WHISPER)
+        if (!llmReady) EchoWriteCore.startModelDownload(EchoWriteCore.MODEL_KIND_LLM)
 
         val poller = object : Runnable {
             override fun run() {
-                val w = getModelDownloadProgress(MODEL_KIND_WHISPER).split(":")
-                val l = getModelDownloadProgress(MODEL_KIND_LLM).split(":")
-                val wState = w[0].toIntOrNull() ?: 0
-                val lState = l[0].toIntOrNull() ?: 0
+                val w = EchoWriteCore.getModelDownloadProgress(EchoWriteCore.MODEL_KIND_WHISPER).split(":")
+                val l = EchoWriteCore.getModelDownloadProgress(EchoWriteCore.MODEL_KIND_LLM).split(":")
+                val wState = w.getOrNull(0)?.toIntOrNull() ?: 0
+                val lState = l.getOrNull(0)?.toIntOrNull() ?: 0
 
                 when {
-                    wState == MODEL_STATE_FAILED || lState == MODEL_STATE_FAILED -> {
-                        recordButton?.text = "❌ 模型下載失敗，請檢查網路"
+                    wState == EchoWriteCore.MODEL_STATE_FAILED || lState == EchoWriteCore.MODEL_STATE_FAILED -> {
+                        recordButton?.text = "❌ 模型下載失敗"
+                        statusText?.text = "請檢查網路連線或開啟主 App 重新下載"
                         return
                     }
-                    wState == MODEL_STATE_READY && lState == MODEL_STATE_READY -> {
+                    wState == EchoWriteCore.MODEL_STATE_READY && lState == EchoWriteCore.MODEL_STATE_READY -> {
                         modelsReady = true
-                        recordButton?.text = "🎙️ 按下說話 (EchoWrite)"
+                        setIdleState()
                         return
                     }
                     else -> {
                         val downloaded = (w.getOrNull(1)?.toLongOrNull() ?: 0L) + (l.getOrNull(1)?.toLongOrNull() ?: 0L)
                         val total = ((w.getOrNull(2)?.toLongOrNull() ?: 0L) + (l.getOrNull(2)?.toLongOrNull() ?: 0L)).coerceAtLeast(1L)
                         val percent = (downloaded * 100 / total).toInt()
-                        recordButton?.text = "⬇️ 下載模型中... $percent%"
+                        recordButton?.text = "⬇️ 下載模型中 $percent%"
                         mainHandler.postDelayed(this, 1000)
                     }
                 }
@@ -148,6 +214,7 @@ class EchoWriteIME : InputMethodService() {
     override fun onDestroy() {
         super.onDestroy()
         progressPoller?.let { mainHandler.removeCallbacks(it) }
+        timerRunnable?.let { mainHandler.removeCallbacks(it) }
     }
 
     private fun toggleRecording() {
@@ -158,32 +225,61 @@ class EchoWriteIME : InputMethodService() {
         }
     }
 
+    private var lastRecordedContextBefore: String = ""
+
+    private fun triggerHaptic(durationMs: Long) {
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(durationMs)
+            }
+        } catch (e: Exception) {
+            // 忽略無震動權限或裝置無震動馬達之例外
+        }
+    }
+
     private fun startRecording() {
         if (!modelsReady) {
             recordButton?.text = "⬇️ 模型下載中，請稍候..."
             return
         }
 
-        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            recordButton?.text = "❌ 請啟用麥克風權限"
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            recordButton?.text = "❌ 請至 EchoWrite App 開啟麥克風權限"
             return
         }
 
         val audioFile = tempAudioFile ?: return
-        if (audioFile.exists()) {
-            audioFile.delete()
-        }
+        if (audioFile.exists()) audioFile.delete()
+
+        // 提取游標前文情境 Context
+        lastRecordedContextBefore = currentInputConnection?.getTextBeforeCursor(150, 0)?.toString() ?: ""
+
+        triggerHaptic(40)
 
         isRecording = true
-        recordButton?.text = "🔴 錄音中 (點擊完成)..."
+        recordingSeconds = 0
+        timerText?.text = "⏱ 00:00"
+        recordButton?.text = "🔴 正在聆聽...（點擊完成）"
+        recordButton?.setBackgroundResource(R.drawable.record_btn_recording_bg)
+        swipeHintText?.visibility = View.VISIBLE
+        previewText?.text = "🎙️ 「正在即時辨識說話內容...」"
+        previewText?.setTextColor(Color.parseColor("#00E5FF"))
+
+        // 樂觀串流草稿排版提示
+        currentInputConnection?.setComposingText("📝 [語音輸入辨識中...]", 1)
+
+        startTimer()
 
         val sampleRate = 16000
         val channelConfig = AudioFormat.CHANNEL_IN_MONO
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
         if (bufferSize <= 0) {
-            recordButton?.text = "❌ 無法初始化錄音"
-            isRecording = false
+            cancelRecording()
             return
         }
 
@@ -196,15 +292,9 @@ class EchoWriteIME : InputMethodService() {
                 bufferSize
             )
             audioRecord?.startRecording()
-        } catch (e: SecurityException) {
-            e.printStackTrace()
-            recordButton?.text = "❌ 權限不足，請授權"
-            isRecording = false
-            return
         } catch (e: Exception) {
             e.printStackTrace()
-            recordButton?.text = "❌ 錄音啟動失敗"
-            isRecording = false
+            cancelRecording()
             return
         }
 
@@ -212,72 +302,130 @@ class EchoWriteIME : InputMethodService() {
             val audioData = ShortArray(bufferSize)
             FileOutputStream(audioFile).use { fos ->
                 fos.write(ByteArray(44))
-
                 var totalBytesWritten = 0
+
                 while (isRecording) {
                     val readSize = audioRecord?.read(audioData, 0, audioData.size) ?: 0
                     if (readSize > 0) {
+                        var sum = 0.0
                         for (i in 0 until readSize) {
                             val sample = audioData[i]
                             fos.write(sample.toInt() and 0xFF)
                             fos.write((sample.toInt() shr 8) and 0xFF)
                             totalBytesWritten += 2
+                            val normalized = sample.toDouble() / 32768.0
+                            sum += normalized * normalized
+                        }
+                        val rms = sqrt(sum / readSize.toDouble()).toFloat()
+                        mainHandler.post {
+                            waveformView?.updateAmplitude(rms * 4.0f)
                         }
                     }
                 }
-
                 writeWavHeader(audioFile, totalBytesWritten)
             }
         }
     }
 
-    // 往左滑動取消：直接丟棄錄音，不呼叫 processAudioFile，不寫入結果。
+    private fun startTimer() {
+        timerRunnable = object : Runnable {
+            override fun run() {
+                if (!isRecording) return
+                recordingSeconds++
+                val mins = recordingSeconds / 60
+                val secs = recordingSeconds % 60
+                timerText?.text = String.format("⏱ %02d:%02d", mins, secs)
+
+                // 樂觀串流動態打字反饋
+                val sampleDrafts = listOf("正在辨識中...", "AI 語意重塑中...", "即時處理中...")
+                val currentDraft = sampleDrafts[(recordingSeconds / 2) % sampleDrafts.size]
+                previewText?.text = "📝 「$currentDraft」"
+
+                mainHandler.postDelayed(this, 1000)
+            }
+        }
+        mainHandler.postDelayed(timerRunnable!!, 1000)
+    }
+
     private fun cancelRecording() {
-        if (!isRecording) return
-        isRecording = false // 讓錄音背景執行緒的 while 迴圈結束並寫入標頭後自然收尾
+        isRecording = false
+        timerRunnable?.let { mainHandler.removeCallbacks(it) }
+        waveformView?.reset()
+
+        triggerHaptic(60)
 
         audioRecord?.stop()
         audioRecord?.release()
         audioRecord = null
 
-        // 延遲刪除，避開與錄音執行緒收尾寫檔的競態
+        // 樂觀排版：立即清除輸入框內的暫存 Composing 草稿
+        currentInputConnection?.setComposingText("", 0)
+        currentInputConnection?.finishComposingText()
+
         mainHandler.postDelayed({
             tempAudioFile?.let { if (it.exists()) it.delete() }
         }, 150)
 
-        recordButton?.text = "🎙️ 按下說話 (EchoWrite)"
-        recordButton?.isEnabled = true
+        previewText?.text = "❌ 已取消本次錄音"
+        previewText?.setTextColor(Color.parseColor("#9AA7BD"))
+        setIdleState()
     }
 
     private fun stopRecordingAndProcessAI() {
         isRecording = false
-        recordButton?.text = "⚙️ AI 潤飾中..."
+        timerRunnable?.let { mainHandler.removeCallbacks(it) }
+        waveformView?.reset()
+
+        recordButton?.text = "⚡ LLM 語意重塑中..."
+        recordButton?.setBackgroundResource(R.drawable.record_btn_processing_bg)
         recordButton?.isEnabled = false
+        swipeHintText?.visibility = View.INVISIBLE
+        previewText?.text = "⚙️ 正在套用【${currentStyle.title}】潤飾繁體中文..."
 
         audioRecord?.stop()
         audioRecord?.release()
         audioRecord = null
 
+        val contextBefore = lastRecordedContextBefore
+
         thread {
             try {
                 val audioPath = tempAudioFile?.absolutePath ?: return@thread
-                val resultText = processAudioFile(audioPath, "casual")
+                val resultText = EchoWriteCore.processAudioFileWithContext(audioPath, currentStyle.id, contextBefore)
 
-                recordButton?.post {
+                mainHandler.post {
                     val ic = currentInputConnection
                     if (ic != null && resultText.isNotEmpty()) {
+                        triggerHaptic(30)
+                        // 樂觀排版原子替換：commitText 會替換 setComposingText 的草稿！
                         ic.commitText(resultText, 1)
+                        previewText?.text = "✅ 已完成：${resultText.take(24)}..."
+                        previewText?.setTextColor(Color.parseColor("#4CD964"))
+                    } else {
+                        ic?.finishComposingText()
+                        previewText?.text = "💬 錄音無內容或音量過小"
                     }
-                    recordButton?.text = "🎙️ 按下說話 (EchoWrite)"
+                    setIdleState()
                     recordButton?.isEnabled = true
                 }
             } catch (e: Exception) {
-                recordButton?.post {
-                    recordButton?.text = "❌ 辨識失敗"
+                mainHandler.post {
+                    currentInputConnection?.finishComposingText()
+                    recordButton?.text = "❌ 處理失敗，請重試"
+                    previewText?.text = "⚠️ 本地運算錯誤：${e.message}"
+                    setIdleState()
                     recordButton?.isEnabled = true
                 }
             }
         }
+    }
+
+    private fun setIdleState() {
+        recordButton?.text = "🎙️ 點擊開始 EchoWrite 語音重塑"
+        recordButton?.setBackgroundResource(R.drawable.record_btn_bg)
+        recordButton?.isEnabled = true
+        swipeHintText?.visibility = View.INVISIBLE
+        timerText?.text = "⏱ 00:00"
     }
 
     private fun writeWavHeader(file: File, totalAudioLen: Int) {

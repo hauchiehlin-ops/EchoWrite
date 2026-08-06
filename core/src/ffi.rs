@@ -145,12 +145,62 @@ pub extern "C" fn echowrite_add_custom_vocabulary(phrase: *const c_char) -> c_in
     }
 }
 
+/// 刪除自訂詞彙。回傳 0 = 成功。
+#[no_mangle]
+pub extern "C" fn echowrite_delete_custom_vocabulary(phrase: *const c_char) -> c_int {
+    let phrase = match str_from_ptr(phrase) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    match crate::delete_custom_vocabulary(phrase) {
+        Ok(_) => 0,
+        Err(_) => 3,
+    }
+}
+
 /// 取得所有自訂詞彙，以換行字元（\n）分隔回傳。
 #[no_mangle]
 pub extern "C" fn echowrite_get_custom_vocabulary() -> *mut c_char {
     match get_custom_vocabulary() {
         Ok(phrases) => into_raw_c_string(phrases.join("\n")),
         Err(_) => into_raw_c_string(String::new()),
+    }
+}
+
+/// 取得歷史紀錄（JSON 字串陣列格式）。
+#[no_mangle]
+pub extern "C" fn echowrite_get_transcription_history_json(limit: c_int) -> *mut c_char {
+    let limit_u32 = if limit <= 0 { 50 } else { limit as u32 };
+    match crate::get_transcription_history(limit_u32) {
+        Ok(history) => {
+            let json = serde_json::to_string(&history.into_iter().map(|h| {
+                serde_json::json!({
+                    "id": h.id,
+                    "timestamp": h.timestamp,
+                    "text": h.text
+                })
+            }).collect::<Vec<_>>()).unwrap_or_else(|_| "[]".to_string());
+            into_raw_c_string(json)
+        }
+        Err(_) => into_raw_c_string("[]".to_string()),
+    }
+}
+
+/// 刪除單筆歷史紀錄。
+#[no_mangle]
+pub extern "C" fn echowrite_delete_history_item(id: i64) -> c_int {
+    match crate::delete_history_item(id) {
+        Ok(_) => 0,
+        Err(_) => 1,
+    }
+}
+
+/// 清空歷史紀錄。
+#[no_mangle]
+pub extern "C" fn echowrite_clear_transcription_history() -> c_int {
+    match crate::clear_transcription_history() {
+        Ok(_) => 0,
+        Err(_) => 1,
     }
 }
 

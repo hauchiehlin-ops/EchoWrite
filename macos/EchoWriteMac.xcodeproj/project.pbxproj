@@ -12,6 +12,7 @@
 		3A0000010000000000000005 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B0000010000000000000005 /* AVFoundation.framework */; };
 		3A0000010000000000000006 /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B0000010000000000000006 /* Carbon.framework */; };
 		3A0000010000000000000007 /* EchoWriteBindingsShim.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0000010000000000000009 /* EchoWriteBindingsShim.swift */; };
+		3A0000010000000000000008 /* EchoWriteMac.icns in Resources */ = {isa = PBXBuildFile; fileRef = 3B000001000000000000000A /* EchoWriteMac.icns */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
 		3B0000010000000000000007 /* EchoWriteMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EchoWriteMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B0000010000000000000008 /* EchoWriteMac-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = EchoWriteMac-Info.plist; sourceTree = "<group>"; };
 		3B0000010000000000000009 /* EchoWriteBindingsShim.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EchoWriteBindingsShim.swift; sourceTree = "<group>"; };
+		3B000001000000000000000A /* EchoWriteMac.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = EchoWriteMac.icns; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,11 +53,12 @@
 		};
 		3D0000010000000000000002 /* Sources */ = {
 			isa = PBXGroup;
-			children = (
-				3B0000010000000000000001 /* AppDelegate.swift */,
-				3B0000010000000000000009 /* EchoWriteBindingsShim.swift */,
-				3B0000010000000000000008 /* EchoWriteMac-Info.plist */,
-			);
+				children = (
+					3B0000010000000000000001 /* AppDelegate.swift */,
+					3B0000010000000000000009 /* EchoWriteBindingsShim.swift */,
+					3B0000010000000000000008 /* EchoWriteMac-Info.plist */,
+					3B000001000000000000000A /* EchoWriteMac.icns */,
+				);
 			path = "";
 			sourceTree = "<group>";
 		};
@@ -129,6 +132,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A0000010000000000000008 /* EchoWriteMac.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

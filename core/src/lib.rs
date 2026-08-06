@@ -10,7 +10,8 @@ pub mod ffi;
 #[cfg(target_os = "android")]
 pub mod jni;
 
-pub use models::{ModelDownloadState, ModelKind, ModelProgress};
+pub use models::{ModelDownloadState, ModelKind, ModelProgress, ModelProfile};
+pub use database::HistoryRecord;
 
 use std::sync::Mutex;
 use lazy_static::lazy_static;
@@ -57,6 +58,18 @@ pub fn initialize(whisper_path: Option<String>, llm_path: Option<String>) -> Res
     Ok(())
 }
 
+/// 設定模型效能分級（Turbo: 200ms 極速 / Pro: 旗艦高精度）
+#[uniffi::export]
+pub fn set_model_profile(profile: models::ModelProfile) {
+    models::set_model_profile(profile);
+}
+
+/// 取得目前的模型效能分級
+#[uniffi::export]
+pub fn get_model_profile() -> models::ModelProfile {
+    models::get_model_profile()
+}
+
 /// 檢查指定模型是否已存在於本地（不觸發下載）。
 #[uniffi::export]
 pub fn is_model_ready(kind: models::ModelKind) -> bool {
@@ -89,6 +102,11 @@ pub fn start_recording() -> Result<(), EchoWriteError> {
 
 #[uniffi::export]
 pub fn stop_recording_and_process(style: String) -> Result<String, EchoWriteError> {
+    stop_recording_and_process_with_context(style, None)
+}
+
+#[uniffi::export]
+pub fn stop_recording_and_process_with_context(style: String, context_before: Option<String>) -> Result<String, EchoWriteError> {
     let (audio_path, whisper_model, llm_model) = {
         let mut state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
         if !state.is_recording {
@@ -106,11 +124,16 @@ pub fn stop_recording_and_process(style: String) -> Result<String, EchoWriteErro
         (audio_path, whisper_model, llm_model)
     }; // 此處 Mutex 鎖自動釋放！
 
-    process_audio_file_internal(audio_path, style, whisper_model, llm_model)
+    process_audio_file_internal(audio_path, style, whisper_model, llm_model, context_before)
 }
 
 #[uniffi::export]
 pub fn process_audio_file(audio_path: String, style: String) -> Result<String, EchoWriteError> {
+    process_audio_file_with_context(audio_path, style, None)
+}
+
+#[uniffi::export]
+pub fn process_audio_file_with_context(audio_path: String, style: String, context_before: Option<String>) -> Result<String, EchoWriteError> {
     let (whisper_model, llm_model) = {
         let state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
         let whisper_model = resolve_model_path(state.whisper_model_path.clone(), models::ModelKind::Whisper)?;
@@ -118,7 +141,7 @@ pub fn process_audio_file(audio_path: String, style: String) -> Result<String, E
         (whisper_model, llm_model)
     };
 
-    process_audio_file_internal(audio_path, style, whisper_model, llm_model)
+    process_audio_file_internal(audio_path, style, whisper_model, llm_model, context_before)
 }
 
 /// 優先使用初始化時已解析的路徑；若當時尚未就緒，重新檢查一次
@@ -137,11 +160,16 @@ pub fn format_only(text: String) -> String {
     formatter::format_text(text)
 }
 
-/// 新增一個自訂詞彙（人名、產品名、公司名等），之後的語音辨識會優先套用，
-/// 降低同音字誤判機率（詳見 `asr::transcribe` 的 initial prompt 用法）。
+/// 新增一個自訂詞彙（人名、產品名、公司名等），之後的語音辨識會優先套用
 #[uniffi::export]
 pub fn add_custom_vocabulary(phrase: String) -> Result<(), EchoWriteError> {
     database::add_custom_phrase(&phrase).map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 刪除指定的自訂詞彙。
+#[uniffi::export]
+pub fn delete_custom_vocabulary(phrase: String) -> Result<(), EchoWriteError> {
+    database::delete_custom_phrase(&phrase).map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
 }
 
 /// 取得目前所有自訂詞彙，供設定畫面顯示/管理。
@@ -150,11 +178,68 @@ pub fn get_custom_vocabulary() -> Result<Vec<String>, EchoWriteError> {
     database::get_custom_phrases().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
 }
 
+/// 新增個人口吻風格範例
+#[uniffi::export]
+pub fn add_personal_tone_sample(sample_text: String) -> Result<(), EchoWriteError> {
+    database::add_personal_tone_sample(&sample_text).map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 取得個人口吻風格範例
+#[uniffi::export]
+pub fn get_personal_tone_samples() -> Result<Vec<String>, EchoWriteError> {
+    database::get_personal_tone_samples().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 清空個人口吻風格範例
+#[uniffi::export]
+pub fn clear_personal_tone_samples() -> Result<(), EchoWriteError> {
+    database::clear_personal_tone_samples().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 零雲端詞庫與風格同步資料匯出（JSON 字串）
+#[uniffi::export]
+pub fn export_sync_data() -> Result<String, EchoWriteError> {
+    database::export_sync_data().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 零雲端詞庫與風格同步資料匯入（傳入 JSON 字串，回傳匯入成功的筆數）
+#[uniffi::export]
+pub fn import_sync_data(json_str: String) -> Result<u32, EchoWriteError> {
+    database::import_sync_data(&json_str)
+        .map(|count| count as u32)
+        .map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 取得最近的轉寫歷史紀錄。
+#[uniffi::export]
+pub fn get_transcription_history(limit: u32) -> Result<Vec<HistoryRecord>, EchoWriteError> {
+    database::get_history(limit).map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 刪除單筆歷史紀錄。
+#[uniffi::export]
+pub fn delete_history_item(id: i64) -> Result<(), EchoWriteError> {
+    database::delete_history_item(id).map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 清空所有歷史紀錄。
+#[uniffi::export]
+pub fn clear_transcription_history() -> Result<(), EchoWriteError> {
+    database::clear_history().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })
+}
+
+/// 取得指定風格的 Prompt 內容說明。
+#[uniffi::export]
+pub fn get_style_prompt_preview(style: String) -> String {
+    llm::get_system_prompt_for_style(&style).to_string()
+}
+
 fn process_audio_file_internal(
     audio_path: String,
     style: String,
     whisper_model: String,
     llm_model: String,
+    context_before: Option<String>,
 ) -> Result<String, EchoWriteError> {
     // 2. 呼叫本地 ASR 進行語音轉文字 (在鎖外執行)
     // 自訂詞彙查詢失敗不應阻斷整個轉寫流程，僅降級為不使用引導詞。
@@ -166,8 +251,14 @@ fn process_audio_file_internal(
         return Ok(String::new());
     }
 
-    // 3. 呼叫本地 SLM 進行句式潤飾與重組 (在鎖外執行)
-    let polished_text = llm::polish_text(raw_text, style, &llm_model)
+    // 2.5 語音快速編輯指令判斷 (Voice Command Editing Fast-Path)
+    if let Some(cmd_text) = formatter::handle_voice_editing_command(&raw_text) {
+        return Ok(cmd_text);
+    }
+
+    // 3. 呼叫本地 SLM 進行句式潤飾與重組 (結合 Context 與個人風格範例)
+    let tone_samples = database::get_personal_tone_samples().unwrap_or_default();
+    let polished_text = llm::polish_text_with_context(raw_text, style, &llm_model, context_before, &tone_samples)
         .map_err(|e| EchoWriteError::ProcessError { message: e })?;
 
     // 4. 套用台灣繁體中文排版規範

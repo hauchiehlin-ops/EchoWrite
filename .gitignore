@@ -10,7 +10,15 @@
 *.xcframework
 /scripts/build
 /scripts/build_win
+/android/keystore
 
 # xcodegen 產出的專案檔（來源為 ios/project.yml，執行 `xcodegen generate` 重新產生）
 /ios/EchoWrite.xcodeproj
 
+# Android build and gradle caches
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/jniLibs/
+*.so

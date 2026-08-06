@@ -10,6 +10,8 @@ settings:
     TARGETED_DEVICE_FAMILY: "1,2"
     CODE_SIGN_STYLE: Automatic
     OTHER_LDFLAGS: "-ObjC"
+    ECHOWRITE_IOS_APP_BUNDLE_ID: com.echowrite.app
+    ECHOWRITE_IOS_KEYBOARD_BUNDLE_ID: com.echowrite.app.keyboard
 
 targets:
   EchoWriteKeyboard:
@@ -23,7 +25,7 @@ targets:
       - path: DarwinNotificationCenter.swift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.echowrite.app.keyboard
+        PRODUCT_BUNDLE_IDENTIFIER: $(ECHOWRITE_IOS_KEYBOARD_BUNDLE_ID)
         INFOPLIST_FILE: EchoWriteKeyboard-Info.plist
         CODE_SIGN_ENTITLEMENTS: EchoWriteKeyboard.entitlements
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)"
@@ -47,19 +49,24 @@ targets:
       - path: DarwinNotificationCenter.swift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.echowrite.app
+        PRODUCT_BUNDLE_IDENTIFIER: $(ECHOWRITE_IOS_APP_BUNDLE_ID)
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: EchoWrite
+        INFOPLIST_KEY_CFBundleIconName: AppIcon
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: EchoWrite 需要使用麥克風錄製您的語音，以進行本地端語音轉文字與語意潤飾。
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_ENTITLEMENTS: App/EchoWriteApp.entitlements
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)"
     dependencies:
       - framework: EchoWriteCore.xcframework
-        embed: true
+        embed: false
       - sdk: Accelerate.framework
       - sdk: libc++.tbd
       - sdk: CoreML.framework

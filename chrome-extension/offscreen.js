@@ -13,10 +13,13 @@ let webllmModule = null;
 let micPermissionPromptOpen = false;
 let autoFinalizeTimer = null;
 let hasSpeechResult = false;
+let recordingStartedAtMs = 0;
 
 // ASR 信心度門檻：低於此值的辨識結果將被過濾（0.0 ~ 1.0）
 const ASR_CONFIDENCE_THRESHOLD = 0.4;
-const AUTO_FINALIZE_AFTER_SILENCE_MS = 1200;
+const AUTO_FINALIZE_FINAL_SILENCE_MS = 3200;
+const AUTO_FINALIZE_INTERIM_SILENCE_MS = 5200;
+const MIN_RECORDING_BEFORE_AUTO_FINALIZE_MS = 2600;
 
 const SYSTEM_PROMPT = [
   "你是一個極致精準的台灣繁體中文語音轉文字助理。你的唯一任務是將語音辨識產出的零碎口語逐字稿，重塑為正確、流暢、段落分明的書面中文。",
@@ -149,18 +152,24 @@ function clearAutoFinalizeTimer() {
   }
 }
 
-function scheduleAutoFinalize() {
+function scheduleAutoFinalize(reason = "result") {
   clearAutoFinalizeTimer();
   const textToProcess = (rawTranscript + latestInterim).trim();
   if (!textToProcess) return;
 
+  const elapsed = Date.now() - recordingStartedAtMs;
+  const baseDelay = latestInterim.trim()
+    ? AUTO_FINALIZE_INTERIM_SILENCE_MS
+    : AUTO_FINALIZE_FINAL_SILENCE_MS;
+  const delay = Math.max(baseDelay, MIN_RECORDING_BEFORE_AUTO_FINALIZE_MS - elapsed);
+
   autoFinalizeTimer = setTimeout(() => {
     autoFinalizeTimer = null;
     if (isRecording && (rawTranscript + latestInterim).trim()) {
-      console.log("EchoWrite: Auto-finalizing after speech pause.");
+      console.log(`EchoWrite: Auto-finalizing after speech pause (${reason}).`);
       stopRecording();
     }
-  }, AUTO_FINALIZE_AFTER_SILENCE_MS);
+  }, delay);
 }
 
 async function startSpeechRecognition() {
@@ -183,6 +192,7 @@ async function startSpeechRecognition() {
   latestInterim = "";
   isProcessingPending = false;
   hasSpeechResult = false;
+  recordingStartedAtMs = Date.now();
   clearAutoFinalizeTimer();
 
   recognition = new SpeechRecognition();
@@ -216,7 +226,7 @@ async function startSpeechRecognition() {
     const visibleTranscript = rawTranscript + interimTranscript;
     if (visibleTranscript.trim()) {
       hasSpeechResult = true;
-      scheduleAutoFinalize();
+      scheduleAutoFinalize(resultIsFinalOnly(interimTranscript) ? "final" : "interim");
     }
     chrome.runtime.sendMessage({
       target: 'content',
@@ -234,7 +244,7 @@ async function startSpeechRecognition() {
       // 忽略 no-speech 錯誤，讓 onend 自動重啟，不要中斷使用者的錄音狀態
       console.log("EchoWrite: 忽略 no-speech 錯誤，保持錄音狀態...");
       if (hasSpeechResult) {
-        scheduleAutoFinalize();
+        scheduleAutoFinalize("no-speech");
       }
     } else {
       stopRecording(true);
@@ -254,6 +264,10 @@ async function startSpeechRecognition() {
 
   recognition.start();
   return true;
+}
+
+function resultIsFinalOnly(interimTranscript) {
+  return !interimTranscript.trim() && rawTranscript.trim();
 }
 
 // 取消錄音：捨棄已轉寫的文字，不觸發 AI 重組，也不寫入歷史紀錄。

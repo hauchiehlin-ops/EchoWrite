@@ -90,11 +90,20 @@ function toggleRecordingFromFloatingButton() {
 function initFloatingButton() {
   if (floatingButtonEl || !document.body || !isExtensionContextValid()) return;
 
+  const existingButton = document.getElementById('echowrite-floating-button');
+  if (existingButton) {
+    existingButton.remove();
+  }
+
   floatingButtonEl = document.createElement('button');
   floatingButtonEl.id = 'echowrite-floating-button';
   floatingButtonEl.type = 'button';
-  floatingButtonEl.title = 'EchoWrite 語音輸入';
+  floatingButtonEl.title = 'EchoWrite 語音輸入 - 固定右下角';
   floatingButtonEl.setAttribute('aria-label', '開啟或關閉 EchoWrite 語音輸入');
+  floatingButtonEl.style.removeProperty('left');
+  floatingButtonEl.style.removeProperty('top');
+  floatingButtonEl.style.setProperty('right', '30px', 'important');
+  floatingButtonEl.style.setProperty('bottom', '30px', 'important');
   floatingButtonEl.innerHTML = `
     <img class="ew-floating-icon" src="${chrome.runtime.getURL('assets/echowrite-floating-icon.png')}" alt="" />
     <span class="ew-floating-ring"></span>

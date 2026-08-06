@@ -42,8 +42,9 @@ final class AudioProcessingService: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             var resultText = ""
+            let contextBefore = EchoWriteShared.getSharedContextBefore()
             do {
-                resultText = try ewProcessAudioFile(audioPath: audioURL.path, style: style)
+                resultText = try ewProcessAudioFileWithContext(audioPath: audioURL.path, style: style, contextBefore: contextBefore)
             } catch {
                 DispatchQueue.main.async { self.lastError = "\(error)" }
             }
