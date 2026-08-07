@@ -71,6 +71,33 @@ detect_android_ndk_prebuilt_tag() {
   esac
 }
 
+detect_android_ndk_llvm_ar() {
+  local candidate_dir candidate_tag
+
+  candidate_tag="$(detect_android_ndk_prebuilt_tag)"
+  for candidate_dir in \
+    "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$candidate_tag" \
+    "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/darwin-arm64" \
+    "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/darwin-x86_64" \
+    "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64" \
+    "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-arm64"
+  do
+    if [[ -x "$candidate_dir/bin/llvm-ar" ]]; then
+      printf '%s\n' "$candidate_dir/bin/llvm-ar"
+      return 0
+    fi
+  done
+
+  for candidate_dir in "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*; do
+    if [[ -x "$candidate_dir/bin/llvm-ar" ]]; then
+      printf '%s\n' "$candidate_dir/bin/llvm-ar"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 if [[ -z "${ANDROID_NDK_ROOT:-}" || ! -d "${ANDROID_NDK_ROOT:-}" ]]; then
   export ANDROID_NDK_ROOT="$(detect_android_ndk_root)"
 fi
@@ -100,15 +127,14 @@ echo "Using Android NDK: $ANDROID_NDK_ROOT"
 
 BLAS_SHIM_DIR="$ROOT_DIR/scripts/build/android-native-shims"
 mkdir -p "$BLAS_SHIM_DIR"
-ANDROID_NDK_PREBUILT_TAG="$(detect_android_ndk_prebuilt_tag)"
-LLVM_AR="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$ANDROID_NDK_PREBUILT_TAG/bin/llvm-ar"
+LLVM_AR="$(detect_android_ndk_llvm_ar || true)"
 
 if [[ ! -x "$LLVM_AR" ]]; then
   cat >&2 <<EOF
 Android NDK llvm-ar not found.
 
 Expected:
-  $LLVM_AR
+  $ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/<host>/bin/llvm-ar
 
 Check that the selected NDK matches this host or set ANDROID_NDK_ROOT explicitly.
 EOF
