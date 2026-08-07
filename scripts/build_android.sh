@@ -64,10 +64,6 @@ export RUSTFLAGS="${RUSTFLAGS:-} -L native=$BLAS_SHIM_DIR"
 # 1. 確保 Android NDK 交叉編譯 target 已安裝
 rustup target add aarch64-linux-android x86_64-linux-android
 
-rm -rf \
-  "$ROOT_DIR/target/aarch64-linux-android/release/build/llama-cpp-sys-2-"* \
-  "$ROOT_DIR/target/x86_64-linux-android/release/build/llama-cpp-sys-2-"*
-
 # 2. 開始為 Android 四大架構編譯
 echo "--- 正在編譯 aarch64-linux-android (主流 64位元 手機) ---"
 cargo ndk -t arm64-v8a -o "$ANDROID_DIR/app/src/main/jniLibs" build --release --manifest-path "$ROOT_DIR/core/Cargo.toml"
@@ -75,4 +71,18 @@ cargo ndk -t arm64-v8a -o "$ANDROID_DIR/app/src/main/jniLibs" build --release --
 echo "--- 正在編譯 x86_64-linux-android (64位元 模擬器) ---"
 cargo ndk -t x86_64 -o "$ANDROID_DIR/app/src/main/jniLibs" build --release --manifest-path "$ROOT_DIR/core/Cargo.toml"
 
+# 3. 確保 C++ 依賴庫 libc++_shared.so 完整包含在 jniLibs 中
+echo "--- 正在同步 libc++_shared.so 至 jniLibs ---"
+for abi_pair in "arm64-v8a:aarch64-linux-android" "x86_64:x86_64-linux-android"; do
+  abi="${abi_pair%%:*}"
+  triple="${abi_pair##*:}"
+  libcxx_src="$(find "$ANDROID_NDK_ROOT" -path "*$triple/libc++_shared.so" 2>/dev/null | head -n 1)"
+  if [[ -n "$libcxx_src" && -f "$libcxx_src" ]]; then
+    mkdir -p "$ANDROID_DIR/app/src/main/jniLibs/$abi"
+    cp -f "$libcxx_src" "$ANDROID_DIR/app/src/main/jniLibs/$abi/"
+    echo "  -> Copied libc++_shared.so to $abi"
+  fi
+done
+
 echo "=== Android Google Play 專用 .so 與 Kotlin/Manifest 骨架準備完成 ==="
+

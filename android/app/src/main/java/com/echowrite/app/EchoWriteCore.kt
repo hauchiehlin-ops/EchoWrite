@@ -2,6 +2,7 @@ package com.echowrite.app
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -33,6 +34,8 @@ enum class ModelProfile(val id: Int, val title: String, val desc: String) {
 data class HistoryItem(val id: Long, val timestamp: String, val text: String)
 
 object EchoWriteCore {
+    private const val TAG = "EchoWriteCore"
+
     const val MODEL_KIND_WHISPER = 0
     const val MODEL_KIND_LLM = 1
     const val MODEL_STATE_NOT_STARTED = 0
@@ -45,37 +48,50 @@ object EchoWriteCore {
     private const val KEY_SELECTED_STYLE = "selected_style"
     private const val KEY_MODEL_PROFILE = "model_profile"
 
+    var isLibraryLoaded = false
+        private set
+
     init {
         try {
+            // 先嘗試載入 C++ 標準運行庫
+            try {
+                System.loadLibrary("c++_shared")
+            } catch (e: Throwable) {
+                Log.w(TAG, "c++_shared load: ${e.message}")
+            }
             System.loadLibrary("echowrite_core")
-        } catch (e: UnsatisfiedLinkError) {
-            e.printStackTrace()
+            isLibraryLoaded = true
+            Log.i(TAG, "Successfully loaded libechowrite_core.so")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to load native library: ${e.message}", e)
+            isLibraryLoaded = false
         }
     }
 
-    external fun initialize(whisperPath: String, llmPath: String): Boolean
-    external fun isModelReady(kind: Int): Boolean
-    external fun startModelDownload(kind: Int)
+    // 原生 JNI 宣告
+    @JvmStatic external fun initialize(whisperPath: String, llmPath: String): Boolean
+    @JvmStatic external fun isModelReady(kind: Int): Boolean
+    @JvmStatic external fun startModelDownload(kind: Int)
     /** 回傳格式：`"state:downloaded:total"` */
-    external fun getModelDownloadProgress(kind: Int): String
-    external fun processAudioFile(audioPath: String, style: String): String
-    external fun processAudioFileWithContext(audioPath: String, style: String, contextBefore: String): String
-    external fun formatOnly(text: String): String
-    external fun addCustomVocabulary(phrase: String): Boolean
-    external fun deleteCustomVocabulary(phrase: String): Boolean
-    external fun getCustomVocabulary(): String
-    external fun getTranscriptionHistory(limit: Int): String
-    external fun deleteHistoryItem(id: Long): Boolean
-    external fun clearTranscriptionHistory(): Boolean
+    @JvmStatic external fun getModelDownloadProgress(kind: Int): String
+    @JvmStatic external fun processAudioFile(audioPath: String, style: String): String
+    @JvmStatic external fun processAudioFileWithContext(audioPath: String, style: String, contextBefore: String): String
+    @JvmStatic external fun formatOnly(text: String): String
+    @JvmStatic external fun addCustomVocabulary(phrase: String): Boolean
+    @JvmStatic external fun deleteCustomVocabulary(phrase: String): Boolean
+    @JvmStatic external fun getCustomVocabulary(): String
+    @JvmStatic external fun getTranscriptionHistory(limit: Int): String
+    @JvmStatic external fun deleteHistoryItem(id: Long): Boolean
+    @JvmStatic external fun clearTranscriptionHistory(): Boolean
 
     // 維度二／三／四高階原生接口
-    external fun setModelProfile(profileId: Int)
-    external fun getModelProfile(): Int
-    external fun addPersonalToneSample(sampleText: String): Boolean
-    external fun getPersonalToneSamples(): String
-    external fun clearPersonalToneSamples(): Boolean
-    external fun exportSyncData(): String
-    external fun importSyncData(jsonStr: String): Int
+    @JvmStatic external fun setModelProfile(profileId: Int)
+    @JvmStatic external fun getModelProfile(): Int
+    @JvmStatic external fun addPersonalToneSample(sampleText: String): Boolean
+    @JvmStatic external fun getPersonalToneSamples(): String
+    @JvmStatic external fun clearPersonalToneSamples(): Boolean
+    @JvmStatic external fun exportSyncData(): String
+    @JvmStatic external fun importSyncData(jsonStr: String): Int
 
     fun getSelectedStyle(context: Context): EchoWriteStyle {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -98,8 +114,10 @@ object EchoWriteCore {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putInt(KEY_MODEL_PROFILE, profile.id).apply()
         try {
-            setModelProfile(profile.id)
-        } catch (e: Exception) {
+            if (isLibraryLoaded) {
+                setModelProfile(profile.id)
+            }
+        } catch (e: Throwable) {
             e.printStackTrace()
         }
     }
@@ -118,7 +136,7 @@ object EchoWriteCore {
                     )
                 )
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
         }
         return list
@@ -131,7 +149,7 @@ object EchoWriteCore {
             for (i in 0 until array.length()) {
                 list.add(array.getString(i))
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
         }
         return list

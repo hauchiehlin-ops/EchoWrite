@@ -47,7 +47,16 @@ class MainActivity : AppCompatActivity() {
 
         val modelsDir = File(filesDir, "models")
         if (!modelsDir.exists()) modelsDir.mkdirs()
-        EchoWriteCore.initialize("", "")
+
+        try {
+            if (EchoWriteCore.isLibraryLoaded) {
+                EchoWriteCore.initialize("", "")
+            } else {
+                Toast.makeText(this, "EchoWrite 核心庫初始化中，請稍候...", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        }
 
         tabLayout = findViewById(R.id.tab_layout)
         container = findViewById(R.id.fragment_container)
