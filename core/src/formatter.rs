@@ -139,7 +139,7 @@ pub fn format_text(mut text: String) -> String {
     text.trim().to_string()
 }
 
-/// 自動偵測口述中的編號（第一、第二、1.、2.、首先、最後等）並自動換行條列
+/// 自動偵測口述中的編號（第一、第二、1.、2.、第一個、第二個、首先、最後等）並自動換行條列與分段
 fn auto_format_list_and_paragraphs(text: String) -> String {
     let mut result = String::new();
     let chars: Vec<char> = text.chars().collect();
@@ -147,12 +147,27 @@ fn auto_format_list_and_paragraphs(text: String) -> String {
     let mut i = 0;
 
     let triggers = [
+        "第一個", "第二個", "第三個", "第四個", "第五個", "第六個", "第七個", "第八個", "第九個", "第十個",
+        "第一點", "第二點", "第三點", "第四點", "第五點", "第六點", "第七點", "第八點", "第九點", "第十點",
+        "第一項", "第二項", "第三項", "第四項", "第五項", "第六項", "第七項", "第八項", "第九項", "第十項",
+        "第一步", "第二步", "第三步", "第四步", "第五步",
+        "第一件事", "第二件事", "第三件事",
         "第一、", "第二、", "第三、", "第四、", "第五、", "第六、", "第七、", "第八、", "第九、", "第十、",
-        "第一點", "第二點", "第三點", "第四點", "第五點",
+        "第一，", "第二，", "第三，", "第四，", "第五，", "第六，", "第七，", "第八，", "第九，", "第十，",
         "首先，", "其次，", "再來，", "接著，", "最後，",
         "首先、", "其次、", "再來、", "接著、", "最後、",
-        "1. ", "2. ", "3. ", "4. ", "5. ", "6. ", "7. ", "8. ", "9. ",
-        "1、", "2、", "3、", "4、", "5、", "6、", "7、", "8、", "9、",
+        "其一，", "其二，", "其三，", "其四，",
+        "其一、", "其二、", "其三、", "其四、",
+        "一方面，", "另一方面，",
+        "一、", "二、", "三、", "四、", "五、", "六、", "七、", "八、", "九、", "十、",
+        "1. ", "2. ", "3. ", "4. ", "5. ", "6. ", "7. ", "8. ", "9. ", "10. ",
+        "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.",
+        "1、", "2、", "3、", "4、", "5、", "6、", "7、", "8、", "9、", "10、",
+        "（一）", "（二）", "（三）", "（四）", "（五）",
+        "(一)", "(二)", "(三)", "(四)", "(五)",
+        "（1）", "（2）", "（3）", "（4）", "（5）",
+        "(1)", "(2)", "(3)", "(4)", "(5)",
+        "A. ", "B. ", "C. ", "D. ", "E. ",
     ];
 
     while i < len {
@@ -162,8 +177,11 @@ fn auto_format_list_and_paragraphs(text: String) -> String {
         for trigger in &triggers {
             if remaining.starts_with(trigger) {
                 if !result.is_empty() && !result.ends_with('\n') {
-                    if result.ends_with('，') || result.ends_with('、') {
+                    while result.ends_with('，') || result.ends_with('、') || result.ends_with(' ') || result.ends_with('：') {
                         result.pop();
+                    }
+                    if !result.ends_with('。') && !result.ends_with('！') && !result.ends_with('？') && !result.ends_with('\n') {
+                        result.push('。');
                     }
                     result.push('\n');
                 }
@@ -180,7 +198,13 @@ fn auto_format_list_and_paragraphs(text: String) -> String {
         }
     }
 
-    result
+    // 若結尾沒有標點且非空，補上句號
+    let mut final_text = result.trim().to_string();
+    if !final_text.is_empty() && !final_text.ends_with('。') && !final_text.ends_with('！') && !final_text.ends_with('？') && !final_text.ends_with('”') && !final_text.ends_with('’') {
+        final_text.push('。');
+    }
+
+    final_text
 }
 
 /// 快速處理獨立語音編輯與標點指令（免經 LLM 即時極速生效）
@@ -234,9 +258,18 @@ mod tests {
     fn test_auto_line_breaks_and_numbering() {
         let input = "今天會議有三個重點第一、確認上線時間第二、分配後端任務第三、完成文檔測試".to_string();
         let output = format_text(input);
-        assert!(output.contains("今天會議有三個重點\n第一、確認上線時間"));
+        assert!(output.contains("今天會議有三個重點。\n第一、確認上線時間"));
         assert!(output.contains("\n第二、分配後端任務"));
         assert!(output.contains("\n第三、完成文檔測試"));
+    }
+
+    #[test]
+    fn test_user_speech_item_segmentation() {
+        let input = "我現在要開始進行測試，如果說可以的話請幫我做好分段準備第一個我要去超商買咖啡，第二個我要進辦公室上班，第三個準備參加晨會".to_string();
+        let output = format_text(input);
+        assert!(output.contains("我現在要開始進行測試，如果說可以的話請幫我做好分段準備。\n第一個我要去超商買咖啡。"));
+        assert!(output.contains("\n第二個我要進辦公室上班。"));
+        assert!(output.contains("\n第三個準備參加晨會。"));
     }
 
     #[test]

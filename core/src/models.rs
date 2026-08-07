@@ -152,10 +152,16 @@ pub fn get_progress(kind: ModelKind) -> ModelProgress {
             return p.clone();
         }
     }
+    let is_ready = is_model_ready(kind);
+    let size = if is_ready {
+        fs::metadata(model_path(kind)).map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
     ModelProgress {
-        downloaded_bytes: 0,
-        total_bytes: 0,
-        state: if is_model_ready(kind) {
+        downloaded_bytes: size,
+        total_bytes: size,
+        state: if is_ready {
             ModelDownloadState::Ready
         } else {
             ModelDownloadState::NotStarted
@@ -168,11 +174,12 @@ pub fn get_progress(kind: ModelKind) -> ModelProgress {
 /// 呼叫端（各平台）應輪詢 `get_progress` 更新 UI。
 pub fn start_download(kind: ModelKind) {
     if is_model_ready(kind) {
+        let size = fs::metadata(model_path(kind)).map(|m| m.len()).unwrap_or(0);
         set_progress(
             kind,
             ModelProgress {
-                downloaded_bytes: 0,
-                total_bytes: 0,
+                downloaded_bytes: size,
+                total_bytes: size,
                 state: ModelDownloadState::Ready,
                 error: None,
             },

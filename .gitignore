@@ -23,6 +23,8 @@ android/app/build/
 android/app/src/main/jniLibs/
 *.so
 
-# iOS build caches
+# iOS/macOS build caches
 ios/build/
-
+macos/build/
+dist/
+*.o

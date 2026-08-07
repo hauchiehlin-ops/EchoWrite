@@ -129,39 +129,7 @@ struct ModelHubView: View {
                     }
 
                     // 快速測試沙盒
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("🎙️ 本地端即時語音測試沙盒")
-                            .font(.headline)
-
-                        Text("在 App 內直接測試語音轉文字與排版效果：")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        if !testResultText.isEmpty {
-                            Text(testResultText)
-                                .font(.body)
-                                .padding()
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-                        }
-
-                        Button {
-                            runQuickTest()
-                        } label: {
-                            HStack {
-                                Image(systemName: isTestProcessing ? "hourglass" : "play.fill")
-                                Text(isTestProcessing ? "AI 重組運算中..." : "開始 3 秒語音快速測試")
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(modelsReady ? Color.blue : Color.gray)
-                            .foregroundStyle(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                        }
-                        .disabled(!modelsReady || isTestProcessing)
-                    }
-                    .padding()
-                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                    LiveAudioTestSandboxView(modelsReady: modelsReady)
                 }
                 .padding()
             }
@@ -235,16 +203,234 @@ struct ModelHubView: View {
         whisperProgress = ewGetModelDownloadProgress(kind: .whisper)
         llmProgress = ewGetModelDownloadProgress(kind: .llm)
     }
+}
 
-    private func runQuickTest() {
-        isTestProcessing = true
-        testResultText = "正在套用格式化與繁中規則..."
+// MARK: - 即時語音測試沙盒 (Live Mic & Text Sandbox)
+struct LiveAudioTestSandboxView: View {
+    let modelsReady: Bool
+    
+    @State private var isRecording = false
+    @State private var countdown = 3
+    @State private var timer: Timer?
+    @State private var isProcessing = false
+    @State private var testResultText = ""
+    @State private var audioRecorder: AVAudioRecorder?
+    @State private var tempAudioURL: URL?
+    @State private var selectedTestStyle: EchoWriteStyle = .casual
+    @State private var statusMessage = "點擊按鈕說話 3 秒，體驗本地雙引擎即時重組"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("🎙️ 本地端即時語音測試沙盒")
+                    .font(.headline)
+                Spacer()
+                if isRecording {
+                    Text("🔴 錄音中 (\(countdown)s)")
+                        .font(.caption.bold())
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Text("在 App 內直接錄製語音或測試預設樣式，體驗台灣繁中排版、分段與風格重塑：")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            // 風格選擇膠囊
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(EchoWriteStyle.allCases) { style in
+                        Button {
+                            selectedTestStyle = style
+                        } label: {
+                            Text(style.title)
+                                .font(.caption.bold())
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(selectedTestStyle == style ? Color.blue : Color(uiColor: .tertiarySystemBackground))
+                                .foregroundStyle(selectedTestStyle == style ? .white : .primary)
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+            }
+
+            if !testResultText.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label("【\(selectedTestStyle.title)】測試結果", systemImage: "sparkles")
+                            .font(.caption.bold())
+                            .foregroundStyle(.blue)
+                        Spacer()
+                        Button {
+                            UIPasteboard.general.string = testResultText
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .font(.caption)
+                        }
+                    }
+                    Text(testResultText)
+                        .font(.subheadline)
+                        .textSelection(.enabled)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            }
+
+            // 核心操作按鈕
+            VStack(spacing: 8) {
+                Button {
+                    if isRecording {
+                        stopRecordingAndProcess()
+                    } else {
+                        start3SecondLiveRecording()
+                    }
+                } label: {
+                    HStack {
+                        if isRecording {
+                            Image(systemName: "stop.circle.fill")
+                                .font(.title3)
+                            Text("停止並運算（倒數 \(countdown) 秒）")
+                                .font(.headline)
+                        } else if isProcessing {
+                            ProgressView()
+                                .tint(.white)
+                            Text("本地 AI 運算重組中...")
+                                .font(.headline)
+                        } else {
+                            Image(systemName: "mic.fill")
+                                .font(.title3)
+                            Text("開始 3 秒即時語音錄音測試")
+                                .font(.headline)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(isRecording ? Color.red : (isProcessing ? Color.purple : Color.blue))
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: isRecording ? Color.red.opacity(0.4) : Color.blue.opacity(0.3), radius: 6, y: 3)
+                }
+                .disabled(isProcessing)
+
+                // 範例文字快速格式化按鈕
+                Button {
+                    runSampleTextFormatting()
+                } label: {
+                    Label("帶入範例：「第一個要去超商買咖啡第二個進辦公室...」", systemImage: "text.badge.plus")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .disabled(isProcessing)
+            }
+        }
+        .padding()
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func start3SecondLiveRecording() {
+        let audioSession = AVAudioSession.sharedInstance()
+        audioSession.requestRecordPermission { granted in
+            DispatchQueue.main.async {
+                guard granted else {
+                    self.testResultText = "❌ 請至系統設定開啟麥克風權限"
+                    return
+                }
+                self.beginRecordingSession()
+            }
+        }
+    }
+
+    private func beginRecordingSession() {
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent("echowrite_sandbox_test.wav")
+        tempAudioURL = fileURL
+
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false
+        ]
+
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker])
+            try session.setActive(true)
+
+            audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
+            audioRecorder?.record()
+
+            isRecording = true
+            countdown = 3
+            testResultText = "🎙️ 請對著麥克風說話（如：『第一個去買咖啡第二個去開會』）..."
+
+            let impact = UIImpactFeedbackGenerator(style: .medium)
+            impact.impactOccurred()
+
+            timer?.invalidate()
+            timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [self] t in
+                if self.countdown > 1 {
+                    self.countdown -= 1
+                } else {
+                    t.invalidate()
+                    self.stopRecordingAndProcess()
+                }
+            }
+        } catch {
+            testResultText = "❌ 錄音啟動失敗：\(error.localizedDescription)"
+        }
+    }
+
+    private func stopRecordingAndProcess() {
+        timer?.invalidate()
+        isRecording = false
+        audioRecorder?.stop()
+        audioRecorder = nil
+
+        guard let audioPath = tempAudioURL?.path, FileManager.default.fileExists(atPath: audioPath) else {
+            testResultText = "❌ 未能取得錄音檔案"
+            return
+        }
+
+        isProcessing = true
+        testResultText = "⚡ 本地雙引擎 AI 重塑與排版中..."
+
+        let style = selectedTestStyle.rawValue
         DispatchQueue.global(qos: .userInitiated).async {
-            let sample = "我們預計在明天下午兩點開會討論第三季度的營銷方案請大家準時出席謝謝"
+            var result = ""
+            do {
+                if modelsReady {
+                    result = try ewProcessAudioFileWithContext(audioPath: audioPath, style: style, contextBefore: nil)
+                } else {
+                    // 模型下載中或未下載時降級套用本地格式化器示範
+                    let demoText = "我現在要開始進行測試，如果說可以的話請幫我做好分段準備第一個我要去超商買咖啡，第二個我要進辦公室上班，第三個準備參加晨會"
+                    result = ewFormatOnly(text: demoText)
+                }
+            } catch {
+                result = "處理錯誤：\(error)"
+            }
+
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                self.testResultText = result.isEmpty ? "（未偵測到清晰語音，請重試）" : result
+                let notification = UINotificationFeedbackGenerator()
+                notification.notificationOccurred(.success)
+            }
+        }
+    }
+
+    private func runSampleTextFormatting() {
+        isProcessing = true
+        let sample = "我現在要開始進行測試如果說可以的話請幫我做好分段準備第一個我要去超商買咖啡第二個我要進辦公室上班第三個準備參加晨會"
+        DispatchQueue.global(qos: .userInitiated).async {
             let formatted = ewFormatOnly(text: sample)
             DispatchQueue.main.async {
+                self.isProcessing = false
                 self.testResultText = formatted
-                self.isTestProcessing = false
             }
         }
     }
@@ -253,11 +439,14 @@ struct ModelHubView: View {
 // MARK: - 2. 風格與偏好設定 (Style Preferences)
 struct StylePreferencesView: View {
     @State private var selectedStyle: EchoWriteStyle = EchoWriteShared.getSelectedStyle()
+    @State private var sampleInput = "今天會議有三個重點第一確認上線時間第二分配後端任務第三完成文檔測試"
+    @State private var transformedOutput = ""
+    @State private var isTransforming = false
 
     var body: some View {
         NavigationStack {
             List {
-                Section(header: Text("預設語音重組風格")) {
+                Section(header: Text("預設語音重組風格（點選即時套用）")) {
                     ForEach(EchoWriteStyle.allCases) { style in
                         HStack(spacing: 12) {
                             Image(systemName: style.icon)
@@ -274,7 +463,7 @@ struct StylePreferencesView: View {
                             }
                             Spacer()
                             if selectedStyle == style {
-                                Image(systemName: "checkmark")
+                                Image(systemName: "checkmark.circle.fill")
                                     .foregroundStyle(.blue)
                                     .font(.headline)
                             }
@@ -283,16 +472,17 @@ struct StylePreferencesView: View {
                         .onTapGesture {
                             selectedStyle = style
                             EchoWriteShared.setSelectedStyle(style)
+                            transformSample()
                         }
                     }
                 }
 
-                Section(header: Text("風格示範對照")) {
+                Section(header: Text("風格即時轉換預覽與示範")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("原始口語輸入：")
+                        Text("原始口述內容：")
                             .font(.caption.bold())
                             .foregroundStyle(.secondary)
-                        Text("「呃明天那個兩點跟客戶開會然後要確認新功能上線時間」")
+                        Text("「\(sampleInput)」")
                             .font(.subheadline)
                             .padding(8)
                             .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
@@ -304,27 +494,40 @@ struct StylePreferencesView: View {
                         Text(previewExample(for: selectedStyle))
                             .font(.subheadline)
                             .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                     }
                     .padding(.vertical, 4)
                 }
+
+                Section(header: Text("風格底層 AI 提示詞 (System Prompt)")) {
+                    Text(ewGetStylePromptPreview(style: selectedStyle.rawValue))
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                }
             }
             .navigationTitle("語音風格偏好")
+            .onAppear { transformSample() }
         }
+    }
+
+    private func transformSample() {
+        transformedOutput = previewExample(for: selectedStyle)
     }
 
     private func previewExample(for style: EchoWriteStyle) -> String {
         switch style {
         case .casual:
-            return "明天下午 2:00 與客戶開會，確認新功能上線時間。"
+            return "今天會議有三個重點。\n第一個：確認上線時間。\n第二個：分配後端任務。\n第三個：完成文檔測試。"
         case .formal:
-            return "謹訂於明日 14:00 召開客戶會議，研商新功能上線期程規劃。"
+            return "本日會議決議重點如后：\n一、確認系統上線期程。\n二、分派後端工程任務。\n三、完成技術文檔驗證測試。"
         case .email:
-            return "主旨：關於明日客戶會議通知\n\n您好，我們預計於明日下午 2:00 與客戶召開會議，主要確認新功能上線時程。\n\n祝 順心"
+            return "主旨：今日專案會議重點與工作分派\n\n各位同仁好，\n\n今日會議決議重點如下：\n1. 確認系統上線時間\n2. 分配後端開發任務\n3. 完成技術文檔測試\n\n祝 順心"
         case .bilingual:
-            return "【中文】：明天下午 2:00 與客戶開會，確認新功能上線時間。\n【English】：Meeting with the client tomorrow at 2:00 PM to confirm the new feature release schedule."
+            return "【中文】：\n今天會議有三個重點：\n1. 確認上線時間\n2. 分配後端任務\n3. 完成文檔測試\n\n【English】：\nToday's meeting has three key takeaways:\n1. Confirm the release schedule\n2. Assign backend tasks\n3. Complete documentation testing"
         case .bullet:
-            return "- 會議時間：明日 14:00\n- 會議對象：客戶端\n- 核心議程：確認新功能上線時程"
+            return "- 核心重點 1：確認上線時間\n- 核心重點 2：分配後端任務\n- 核心重點 3：完成文檔測試"
         }
     }
 }
@@ -493,6 +696,33 @@ struct KeyboardDoctorView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section(header: Text("⚠️ 如何確認目前正在使用 EchoWrite 鍵盤？")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("正確使用：深藍科技風專屬鍵盤")
+                                .font(.subheadline.bold())
+                        }
+                        Text("切換成功時，鍵盤會呈現【深藍色 CyberGlass 介面】，頂部標示『⚡ EchoWrite 本地雙引擎』，中央有藍色發光的大顆『🎙️ 點擊開始 EchoWrite 語音重塑』按鈕。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Divider()
+
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text("常見誤區：切勿點 Apple 鍵盤右下角小麥克風")
+                                .font(.subheadline.bold())
+                        }
+                        Text("若畫面上依然是 Apple 系統的『ㄅㄆㄇㄈ 注音鍵盤』，點擊右下角的小麥克風會呼叫 Siri 逐字稿（無法進行 EchoWrite 的 AI 自動分段與風格重塑）。請長按地球鍵切換至 EchoWrite 鍵盤！")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 Section(header: Text("系統權限與整合狀態檢測")) {
                     HStack {
                         Image(systemName: "mic.fill")
@@ -519,8 +749,8 @@ struct KeyboardDoctorView: View {
 
                 Section(header: Text("三步驟啟用 EchoWrite 輸入法")) {
                     StepGuideRow(step: 1, title: "新增輸入法", description: "前往 iOS「設定 > 一般 > 鍵盤 > 鍵盤 > 新增鍵盤」，選取 EchoWrite。")
-                    StepGuideRow(step: 2, title: "允許完全取用", description: "點擊 EchoWrite 鍵盤，開啟「允許完全取用」（以載入本地模型與麥克風）。")
-                    StepGuideRow(step: 3, title: "切換使用", description: "在任一聊天或輸入框長按地球圖示 🌐，選取「EchoWrite」即可開始說話。")
+                    StepGuideRow(step: 2, title: "允許完全取用（必備）", description: "點擊 EchoWrite 鍵盤，開啟「允許完全取用」（以允許鍵盤錄音與載入本地模型）。")
+                    StepGuideRow(step: 3, title: "切換使用", description: "在任一聊天輸入框長按地球圖示 🌐，選取「EchoWrite」，看到深藍色科技鍵盤即可點擊大按鈕說話！")
                 }
 
                 Section(header: Text("📖 30 秒語音操作指令速查")) {
