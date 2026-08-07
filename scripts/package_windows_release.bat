@@ -28,8 +28,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: 2. 編譯 Rust 核心動態庫 (echowrite_core.dll)
-echo [2/5] 編譯 Rust 核心引擎 (Release 模式)...
+:: 2. 編譯 Rust 核心動態庫 (echowrite_core.dll) - 啟用靜態 CRT 鏈結 (+crt-static / /MT) 徹底免除使用者電腦缺 VC++ 運行庫的瞬閃問題
+echo [2/5] 編譯 Rust 核心引擎 (Release 模式，靜態 CRT 鏈結)...
+set "RUSTFLAGS=-C target-feature=+crt-static"
+set "CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+set "CMAKE_POLICY_DEFAULT_CMP0091=NEW"
 cargo build --release --manifest-path "%ROOT_DIR%\core\Cargo.toml" --target x86_64-pc-windows-msvc
 if errorlevel 1 (
     echo [ERROR] Rust 核心編譯失敗！

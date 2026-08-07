@@ -205,6 +205,106 @@ pub extern "C" fn echowrite_clear_transcription_history() -> c_int {
 }
 
 #[no_mangle]
+pub extern "C" fn echowrite_process_audio_file_with_context(
+    audio_path: *const c_char,
+    style: *const c_char,
+    context_before: *const c_char,
+) -> *mut c_char {
+    let audio_path = match str_from_ptr(audio_path) {
+        Ok(v) => v,
+        Err(_) => return into_raw_c_string(String::new()),
+    };
+    let style = match str_from_ptr(style) {
+        Ok(v) => v,
+        Err(_) => return into_raw_c_string(String::new()),
+    };
+    let context_before = opt_str_from_ptr(context_before);
+
+    match crate::process_audio_file_with_context(audio_path, style, context_before) {
+        Ok(text) => into_raw_c_string(text),
+        Err(_) => into_raw_c_string(String::new()),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn echowrite_format_only(text: *const c_char) -> *mut c_char {
+    let text = match str_from_ptr(text) {
+        Ok(v) => v,
+        Err(_) => return into_raw_c_string(String::new()),
+    };
+    into_raw_c_string(crate::format_only(text))
+}
+
+#[no_mangle]
+pub extern "C" fn echowrite_set_model_profile(profile_id: c_int) {
+    let profile = if profile_id == 1 {
+        crate::ModelProfile::Pro
+    } else {
+        crate::ModelProfile::Turbo
+    };
+    crate::set_model_profile(profile);
+}
+
+#[no_mangle]
+pub extern "C" fn echowrite_get_model_profile() -> c_int {
+    match crate::get_model_profile() {
+        crate::ModelProfile::Turbo => 0,
+        crate::ModelProfile::Pro => 1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn echowrite_add_personal_tone_sample(sample_text: *const c_char) -> c_int {
+    let sample = match str_from_ptr(sample_text) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    match crate::add_personal_tone_sample(sample) {
+        Ok(_) => 0,
+        Err(_) => 1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn echowrite_get_personal_tone_samples() -> *mut c_char {
+    match crate::get_personal_tone_samples() {
+        Ok(samples) => {
+            let json = serde_json::to_string(&samples).unwrap_or_else(|_| "[]".to_string());
+            into_raw_c_string(json)
+        }
+        Err(_) => into_raw_c_string("[]".to_string()),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn echowrite_clear_personal_tone_samples() -> c_int {
+    match crate::clear_personal_tone_samples() {
+        Ok(_) => 0,
+        Err(_) => 1,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn echowrite_export_sync_data() -> *mut c_char {
+    match crate::export_sync_data() {
+        Ok(json) => into_raw_c_string(json),
+        Err(_) => into_raw_c_string("{}".to_string()),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn echowrite_import_sync_data(json_str: *const c_char) -> c_int {
+    let json = match str_from_ptr(json_str) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    match crate::import_sync_data(json) {
+        Ok(count) => count as c_int,
+        Err(_) => -1,
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn echowrite_free_string(ptr: *mut c_char) {
     if ptr.is_null() {
         return;

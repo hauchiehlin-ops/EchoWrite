@@ -16,7 +16,7 @@ function Test-CommandExists ($cmd) {
 $needRestart = $false
 
 # 1. 檢查 .NET 8 SDK
-Write-Host "`n[1/3] 檢查 .NET 8.0 SDK..." -NoNewline
+Write-Host "`n[1/4] 檢查 .NET 8.0 SDK..." -NoNewline
 $dotnetInstalled = $false
 if (Test-CommandExists "dotnet") {
     $sdks = dotnet --list-sdks 2>$null
@@ -42,7 +42,7 @@ if (-not $dotnetInstalled) {
 }
 
 # 2. 檢查 Rust 與 cargo
-Write-Host "`n[2/3] 檢查 Rust 編譯工具鏈 (rustup & cargo)..." -NoNewline
+Write-Host "`n[2/4] 檢查 Rust 編譯工具鏈 (rustup & cargo)..." -NoNewline
 $rustInstalled = $false
 if (Test-CommandExists "cargo" -and Test-CommandExists "rustup") {
     $rustInstalled = $true
@@ -69,7 +69,7 @@ if (Test-CommandExists "rustup") {
 }
 
 # 3. 檢查 Visual Studio C++ 生成工具 (MSVC)
-Write-Host "`n[3/3] 檢查 Visual Studio C++ 建置工具 (MSVC Linker)..." -NoNewline
+Write-Host "`n[3/4] 檢查 Visual Studio C++ 建置工具 (MSVC Linker)..." -NoNewline
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vcInstalled = $false
 
@@ -94,6 +94,37 @@ if (-not $vcInstalled) {
         Remove-Item $vsInstaller -Force -ErrorAction SilentlyContinue
     }
     $needRestart = $true
+}
+
+# 4. 檢查並確保安裝 Microsoft Visual C++ 2015-2022 Redistributable (x64)
+Write-Host "`n[4/4] 檢查 Visual C++ 運行庫 (VCRedist x64)..." -NoNewline
+$vcRedistInstalled = $false
+$uninstallKeys = @(
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+    "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+)
+foreach ($key in $uninstallKeys) {
+    if (Test-Path $key) {
+        $found = Get-ItemProperty "$key\*" | Where-Object { $_.DisplayName -match "Microsoft Visual C\+\+ 20(15|17|19|22).*Redistributable.*x64" }
+        if ($found) {
+            $vcRedistInstalled = $true
+            break
+        }
+    }
+}
+
+if ($vcRedistInstalled) {
+    Write-Host " [OK] 已安裝 Visual C++ x64 運行庫" -ForegroundColor Green
+} else {
+    Write-Host " [MISSING] 未偵測到 VC++ 運行庫，正在自動安裝..." -ForegroundColor Yellow
+    if (Test-CommandExists "winget") {
+        winget install Microsoft.VCRedist.2015+.x64 --silent --accept-package-agreements --accept-source-agreements
+    } else {
+        $vcRedistExe = "$env:TEMP\vc_redist.x64.exe"
+        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $vcRedistExe
+        Start-Process -FilePath $vcRedistExe -ArgumentList "/install /quiet /norestart" -Wait
+        Remove-Item $vcRedistExe -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host "`n==============================================================================" -ForegroundColor Green

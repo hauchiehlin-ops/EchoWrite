@@ -24,8 +24,11 @@ Set-Location $RootDir
 Write-Host "`n[1/5] 檢查 Rust Windows x86_64 MSVC 工具鏈..." -ForegroundColor Yellow
 rustup target add x86_64-pc-windows-msvc
 
-# 2. 編譯 Rust 核心 DLL
-Write-Host "`n[2/5] 編譯 Rust 核心動態庫 (echowrite_core.dll)..." -ForegroundColor Yellow
+# 2. 編譯 Rust 核心 DLL (啟用靜態 CRT 鏈結 +crt-static / /MT)
+Write-Host "`n[2/5] 編譯 Rust 核心動態庫 (echowrite_core.dll，靜態 CRT 鏈結)..." -ForegroundColor Yellow
+$env:RUSTFLAGS = "-C target-feature=+crt-static"
+$env:CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
+$env:CMAKE_POLICY_DEFAULT_CMP0091 = "NEW"
 cargo build --release --manifest-path "$RootDir\core\Cargo.toml" --target x86_64-pc-windows-msvc
 
 $CoreDll = "$RootDir\target\x86_64-pc-windows-msvc\release\echowrite_core.dll"
