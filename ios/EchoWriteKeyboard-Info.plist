@@ -17,9 +17,11 @@
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.1.0</string>
+	<string>2.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>12</string>
+	<string>13</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>
@@ -36,7 +38,5 @@
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>EchoWrite 需要使用麥克風錄製您的語音，以進行本地端語音轉文字與語意潤飾。</string>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
 </dict>
 </plist>

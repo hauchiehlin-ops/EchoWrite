@@ -828,6 +828,8 @@ struct StepGuideRow: View {
     }
 }
 
-#Preview {
-    ContentView(processingService: AudioProcessingService())
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView(processingService: AudioProcessingService())
+    }
 }

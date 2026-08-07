@@ -45,6 +45,19 @@ pub struct ModelProgress {
 lazy_static! {
     static ref ACTIVE_PROFILE: Mutex<ModelProfile> = Mutex::new(ModelProfile::Turbo);
     static ref PROGRESS: Mutex<HashMap<ModelKind, ModelProgress>> = Mutex::new(HashMap::new());
+    static ref OVERRIDE_MODEL_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+}
+
+pub fn set_model_dir(path: PathBuf) {
+    if let Ok(mut lock) = OVERRIDE_MODEL_DIR.lock() {
+        *lock = Some(path);
+    }
+}
+
+pub fn set_override_model_dir(path: Option<PathBuf>) {
+    if let Ok(mut lock) = OVERRIDE_MODEL_DIR.lock() {
+        *lock = path;
+    }
 }
 
 pub fn set_model_profile(profile: ModelProfile) {
@@ -104,17 +117,29 @@ fn spec_for(kind: ModelKind) -> ModelSpec {
     }
 }
 
-/// 模型存放目錄。可用 `ECHOWRITE_MODEL_DIR` 環境變數覆寫（測試 / 平台自訂共享容器路徑用）。
+/// 模型存放目錄。優先使用 `OVERRIDE_MODEL_DIR`，其次 `ECHOWRITE_MODEL_DIR` 環境變數，最後使用使用者主目錄或暫存目錄。
 pub fn model_dir() -> PathBuf {
-    if let Ok(override_dir) = std::env::var("ECHOWRITE_MODEL_DIR") {
-        let path = PathBuf::from(override_dir);
-        let _ = fs::create_dir_all(&path);
-        return path;
+    if let Ok(lock) = OVERRIDE_MODEL_DIR.lock() {
+        if let Some(ref path) = *lock {
+            let _ = fs::create_dir_all(path);
+            return path.clone();
+        }
     }
-    let mut dir = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    dir.push(".echowrite");
-    dir.push("models");
-    let _ = fs::create_dir_all(&dir);
+    if let Ok(override_dir) = std::env::var("ECHOWRITE_MODEL_DIR") {
+        let trimmed = override_dir.trim();
+        if !trimmed.is_empty() {
+            let path = PathBuf::from(trimmed);
+            let _ = fs::create_dir_all(&path);
+            return path;
+        }
+    }
+    let base_dir = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let dir = base_dir.join(".echowrite").join("models");
+    if fs::create_dir_all(&dir).is_err() {
+        let temp_dir = std::env::temp_dir().join(".echowrite").join("models");
+        let _ = fs::create_dir_all(&temp_dir);
+        return temp_dir;
+    }
     dir
 }
 
@@ -218,25 +243,38 @@ pub fn start_download(kind: ModelKind) {
 fn download_blocking(kind: ModelKind) -> Result<(), String> {
     let spec = spec_for(kind);
     let dest = model_path(kind);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("建立目錄失敗: {}", e))?;
+    }
     let tmp_dest = dest.with_extension("part");
 
-    let response = reqwest::blocking::get(spec.url).map_err(|e| e.to_string())?;
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("EchoWrite/1.0 (Android; Rust)")
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("網路客戶端初始化失敗: {}", e))?;
+
+    let response = client
+        .get(spec.url)
+        .send()
+        .map_err(|e| format!("下載連線失敗: {}", e))?;
+
     if !response.status().is_success() {
-        return Err(format!("Download failed: HTTP {}", response.status()));
+        return Err(format!("下載失敗: HTTP {}", response.status()));
     }
     let total = response.content_length().unwrap_or(0);
 
-    let mut file = File::create(&tmp_dest).map_err(|e| e.to_string())?;
+    let mut file = File::create(&tmp_dest).map_err(|e| format!("建立檔案失敗 {:?}: {}", tmp_dest, e))?;
     let mut reader = response;
     let mut buffer = [0u8; 65536];
     let mut downloaded: u64 = 0;
 
     loop {
-        let n = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+        let n = reader.read(&mut buffer).map_err(|e| format!("讀取資料失敗: {}", e))?;
         if n == 0 {
             break;
         }
-        file.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+        file.write_all(&buffer[..n]).map_err(|e| format!("寫入檔案失敗: {}", e))?;
         downloaded += n as u64;
         set_progress(
             kind,

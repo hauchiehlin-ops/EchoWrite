@@ -27,7 +27,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 3. 註冊全域快捷鍵 (Command+Shift+E)
         registerGlobalHotKey()
 
-        // 4. 載入本地 Rust 核心庫
+        // 4. 設定模型專屬目錄並載入本地 Rust 核心庫
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let modelsDir = appSupport.appendingPathComponent("EchoWrite/models")
+            try? FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
+            ewSetModelDir(path: modelsDir.path)
+        }
+
         do {
             try ewInitialize(whisperPath: "", llmPath: "")
             print("EchoWrite: Core initialized successfully.")

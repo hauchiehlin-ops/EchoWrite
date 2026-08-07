@@ -30,6 +30,20 @@ fn opt_str_from_ptr(ptr: *const c_char) -> Option<String> {
 }
 
 #[no_mangle]
+pub extern "C" fn echowrite_set_model_dir(dir_path: *const c_char) -> c_int {
+    let dir = match str_from_ptr(dir_path) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    if !dir.is_empty() {
+        crate::set_model_dir(dir);
+        0
+    } else {
+        1
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn echowrite_initialize(whisper_path: *const c_char, llm_path: *const c_char) -> c_int {
     let whisper_path = opt_str_from_ptr(whisper_path);
     let llm_path = opt_str_from_ptr(llm_path);

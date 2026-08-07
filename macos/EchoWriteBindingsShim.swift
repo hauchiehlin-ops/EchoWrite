@@ -1,5 +1,8 @@
 import Foundation
 
+@_silgen_name("echowrite_set_model_dir")
+private func c_echowrite_set_model_dir(_ dirPath: UnsafePointer<CChar>) -> Int32
+
 @_silgen_name("echowrite_initialize")
 private func c_echowrite_initialize(_ whisperPath: UnsafePointer<CChar>, _ llmPath: UnsafePointer<CChar>) -> Int32
 
@@ -50,6 +53,13 @@ struct EchoWriteModelProgress {
     let downloadedBytes: UInt64
     let totalBytes: UInt64
     let state: EchoWriteModelDownloadState
+}
+
+@discardableResult
+func ewSetModelDir(path: String) -> Bool {
+    path.withCString { cPath in
+        c_echowrite_set_model_dir(cPath) == 0
+    }
 }
 
 /// `whisperPath` / `llmPath` 可傳空字串，交由 Rust 端自動解析

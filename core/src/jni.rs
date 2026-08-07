@@ -5,7 +5,7 @@ use crate::{
     add_custom_vocabulary, format_only, get_custom_vocabulary, get_model_download_progress, initialize, is_model_ready,
     process_audio_file_with_context, start_model_download, set_model_profile, get_model_profile,
     add_personal_tone_sample, get_personal_tone_samples, clear_personal_tone_samples,
-    export_sync_data, import_sync_data,
+    export_sync_data, import_sync_data, set_model_dir,
 };
 use jni::objects::{JObject, JString};
 use jni::sys::{jboolean, jint, jlong, jstring, JNI_FALSE, JNI_TRUE};
@@ -34,6 +34,21 @@ fn model_kind_from_jint(kind: jint) -> ModelKind {
 // -----------------------------------------------------------------------------
 // JNI Exports for EchoWriteIME
 // -----------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_setModelDir(
+    mut env: JNIEnv,
+    _: JObject,
+    dir: JString,
+) -> jboolean {
+    if let Ok(dir_str) = get_java_string(&mut env, dir) {
+        if !dir_str.is_empty() {
+            set_model_dir(dir_str);
+            return JNI_TRUE;
+        }
+    }
+    JNI_FALSE
+}
 
 #[no_mangle]
 pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_initialize(
@@ -89,7 +104,8 @@ pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_getModelDownloadProgr
     };
     let downloaded: jlong = progress.downloaded_bytes as jlong;
     let total: jlong = progress.total_bytes as jlong;
-    let result = format!("{}:{}:{}", state_code, downloaded, total);
+    let err_msg = progress.error.unwrap_or_default();
+    let result = format!("{}:{}:{}:{}", state_code, downloaded, total, err_msg);
 
     match env.new_string(result) {
         Ok(output) => output.into_raw(),
@@ -267,6 +283,15 @@ pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_clearTranscriptionHis
 // -----------------------------------------------------------------------------
 // JNI Exports for EchoWriteCore
 // -----------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "system" fn Java_com_echowrite_app_EchoWriteCore_setModelDir(
+    env: JNIEnv,
+    obj: JObject,
+    dir: JString,
+) -> jboolean {
+    Java_com_echowrite_app_EchoWriteIME_setModelDir(env, obj, dir)
+}
 
 #[no_mangle]
 pub extern "system" fn Java_com_echowrite_app_EchoWriteCore_initialize(

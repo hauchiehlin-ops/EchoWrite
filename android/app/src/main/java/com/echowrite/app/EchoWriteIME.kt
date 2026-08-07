@@ -70,6 +70,7 @@ class EchoWriteIME : InputMethodService() {
         val modelsDir = File(filesDir, "models")
         if (!modelsDir.exists()) modelsDir.mkdirs()
 
+        EchoWriteCore.setModelDir(modelsDir.absolutePath)
         EchoWriteCore.initialize("", "")
         tempAudioFile = File(cacheDir, "temp_input.wav")
         currentStyle = EchoWriteCore.getSelectedStyle(this)

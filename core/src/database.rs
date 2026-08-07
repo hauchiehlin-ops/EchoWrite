@@ -47,6 +47,15 @@ pub fn get_db_path() -> PathBuf {
             return path.join("echowrite.db");
         }
     }
+
+    let mdir = crate::models::model_dir();
+    if mdir.is_dir() {
+        if let Some(parent) = mdir.parent() {
+            return parent.join("echowrite.db");
+        }
+        return mdir.join("echowrite.db");
+    }
+
     // 取得使用者主目錄下的 .echowrite 目錄，若無權限建立則退回 temp_dir 或當前目錄
     let base_dir = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let path = base_dir.join(".echowrite");

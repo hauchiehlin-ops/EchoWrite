@@ -1204,6 +1204,15 @@ public func processAudioFileWithContext(audioPath: String, style: String, contex
 })
 }
 /**
+ * 設定模型存放目錄（供行動端/沙盒指定 App 專屬資料夾使用）
+ */
+public func setModelDir(dirPath: String) {try! rustCall() {
+    uniffi_echowrite_core_fn_func_set_model_dir(
+        FfiConverterString.lower(dirPath),$0
+    )
+}
+}
+/**
  * 設定模型效能分級（Turbo: 200ms 極速 / Pro: 旗艦高精度）
  */
 public func setModelProfile(profile: ModelProfile) {try! rustCall() {
@@ -1313,6 +1322,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_process_audio_file_with_context() != 18449) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_set_model_dir() != 36944) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_set_model_profile() != 65015) {

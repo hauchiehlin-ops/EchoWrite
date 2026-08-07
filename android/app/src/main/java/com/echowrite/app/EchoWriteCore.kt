@@ -69,6 +69,7 @@ object EchoWriteCore {
     }
 
     // 原生 JNI 宣告
+    @JvmStatic external fun setModelDir(dirPath: String): Boolean
     @JvmStatic external fun initialize(whisperPath: String, llmPath: String): Boolean
     @JvmStatic external fun isModelReady(kind: Int): Boolean
     @JvmStatic external fun startModelDownload(kind: Int)

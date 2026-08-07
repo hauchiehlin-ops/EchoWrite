@@ -16,6 +16,10 @@ namespace EchoWrite
         
         // 匯入 Rust 核心庫 (DLL FFI)
         [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int echowrite_set_model_dir(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string dirPath);
+
+        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
         private static extern int echowrite_initialize(
             [MarshalAs(UnmanagedType.LPUTF8Str)] string whisperPath,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string llmPath);
@@ -76,6 +80,7 @@ namespace EchoWrite
 
         private static bool _modelsReady = false;
         private static System.Windows.Forms.Timer? _modelDownloadTimer;
+        private static System.Threading.Mutex? _singleInstanceMutex;
 
         // Windows API: 用於模擬鍵盤輸入與全域快捷鍵
         [DllImport("user32.dll")]
@@ -90,6 +95,19 @@ namespace EchoWrite
         [STAThread]
         static void Main()
         {
+            // 單一實例鎖定 (防止重複啟動造成熱鍵衝突)
+            _singleInstanceMutex = new System.Threading.Mutex(true, "Global\\EchoWrite_Desktop_SingleInstance_Mutex", out bool isNewInstance);
+            if (!isNewInstance)
+            {
+                MessageBox.Show(
+                    "EchoWrite 已經在系統右下角托盤運行中。\n請按下快捷鍵 [Alt + S] 或點擊托盤圖示即可開始語音輸入。",
+                    "EchoWrite 已在運行",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information
+                );
+                return;
+            }
+
             // 全域未攔截例外處理器，徹底防止應用程式瞬閃無提示崩潰
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
@@ -109,9 +127,21 @@ namespace EchoWrite
             // 0. 配置原生地區庫動態解析器 (明確鎖定執行檔同級目錄之 DLL)
             SetupNativeDllResolver();
 
-            // 1. 初始化本地 Rust 核心引擎。加入防禦性例外攔截
+            // 1. 初始化本地 Rust 核心引擎與模型目錄
             try
             {
+                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                string modelsDir = Path.Combine(localAppData, "EchoWrite", "models");
+                try
+                {
+                    Directory.CreateDirectory(modelsDir);
+                    echowrite_set_model_dir(modelsDir);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Models dir setup info: " + ex.Message);
+                }
+
                 int initResult = echowrite_initialize("", "");
                 if (initResult != 0)
                 {
@@ -171,7 +201,21 @@ namespace EchoWrite
 
             // 3. 註冊全域快捷鍵 (Alt + S)
             var form = new KeyHandlerForm();
-            RegisterHotKey(form.Handle, 1, 0x0001, 0x53); // MOD_ALT = 0x0001, S = 0x53
+            // MOD_ALT = 0x0001, MOD_NOREPEAT = 0x4000, S = 0x53
+            bool hotKeyRegistered = RegisterHotKey(form.Handle, 1, 0x0001 | 0x4000, 0x53);
+            if (!hotKeyRegistered)
+            {
+                hotKeyRegistered = RegisterHotKey(form.Handle, 1, 0x0001, 0x53);
+            }
+            if (!hotKeyRegistered)
+            {
+                _trayIcon.ShowBalloonTip(
+                    5000,
+                    "EchoWrite 快捷鍵提醒",
+                    "全域快捷鍵 [Alt + S] 已被其他軟體佔用。您依然可以直接點擊右下角托盤圖示來啟動或停止錄音。",
+                    ToolTipIcon.Warning
+                );
+            }
 
             // 4. 初次安裝或更新後，引導使用者開啟 Windows 麥克風權限
             RunPermissionOnboardingForInstallOrUpdate();
@@ -456,9 +500,33 @@ namespace EchoWrite
 
         private static void SimulateTyping(string text)
         {
+            if (string.IsNullOrEmpty(text)) return;
+
+            // 規整換行符號，防止在 Windows 富文本或網頁編輯器中產生雙重換行
+            string normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
+
             // 利用 Windows SendInput 函數將文字轉換為鍵盤 Unicode 輸入
-            foreach (char c in text)
+            foreach (char c in normalized)
             {
+                if (c == '\n')
+                {
+                    // 針對換行符號使用虛擬按鍵 VK_RETURN (0x0D) 以確保各文字編輯器正確分行
+                    INPUT returnDown = new INPUT { type = 1 };
+                    returnDown.u.ki = new KEYBDINPUT
+                    {
+                        wVk = 0x0D, // VK_RETURN
+                        wScan = 0,
+                        dwFlags = 0,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    };
+                    INPUT returnUp = returnDown;
+                    returnUp.u.ki.dwFlags = 0x0002; // KEYEVENTF_KEYUP
+                    SendInput(1, ref returnDown, Marshal.SizeOf(typeof(INPUT)));
+                    SendInput(1, ref returnUp, Marshal.SizeOf(typeof(INPUT)));
+                    continue;
+                }
+
                 INPUT inputDown = new INPUT { type = 1 }; // INPUT_KEYBOARD
                 inputDown.u.ki = new KEYBDINPUT
                 {

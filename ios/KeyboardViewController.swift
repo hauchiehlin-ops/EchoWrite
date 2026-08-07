@@ -7,6 +7,7 @@ import AVFoundation
 /// 2. 即時串流／樂觀排版 (Optimistic Streaming Typing)。
 /// 3. 5 大語意風格一鍵切換。
 /// 4. 滑動取消手勢與防呆觸覺回饋。
+@objc(KeyboardViewController)
 class KeyboardViewController: UIInputViewController {
     // MARK: - UI 元件
     private var headerStackView: UIStackView!
@@ -40,20 +41,27 @@ class KeyboardViewController: UIInputViewController {
     
     private let resultTimeoutSeconds: TimeInterval = 20
     private let swipeToCancelThreshold: CGFloat = 70
+    private var heightConstraint: NSLayoutConstraint?
 
     // MARK: - 生命週期
     override func viewDidLoad() {
         super.viewDidLoad()
-        
-        let keyboardInputView = UIInputView(frame: CGRect(x: 0, y: 0, width: 0, height: 260), inputViewStyle: .keyboard)
-        keyboardInputView.allowsSelfSizing = true
-        inputView = keyboardInputView
         
         EchoWriteShared.configureSharedModelDirectory()
         currentStyle = EchoWriteShared.getSelectedStyle()
         
         setupCyberGlassUI()
         updateStyleSelectionUI()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        if heightConstraint == nil {
+            let h = view.heightAnchor.constraint(equalToConstant: 260)
+            h.priority = UILayoutPriority(999)
+            h.isActive = true
+            heightConstraint = h
+        }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -269,9 +277,7 @@ class KeyboardViewController: UIInputViewController {
             globeButton.widthAnchor.constraint(equalToConstant: 42),
             deleteButton.widthAnchor.constraint(equalToConstant: 42),
             returnButton.widthAnchor.constraint(equalToConstant: 56),
-            bottomBar.heightAnchor.constraint(equalToConstant: 34),
-
-            view.heightAnchor.constraint(greaterThanOrEqualToConstant: 230)
+            bottomBar.heightAnchor.constraint(equalToConstant: 34)
         ])
     }
 

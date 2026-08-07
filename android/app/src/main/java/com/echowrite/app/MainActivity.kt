@@ -50,6 +50,7 @@ class MainActivity : AppCompatActivity() {
 
         try {
             if (EchoWriteCore.isLibraryLoaded) {
+                EchoWriteCore.setModelDir(modelsDir.absolutePath)
                 EchoWriteCore.initialize("", "")
             } else {
                 Toast.makeText(this, "EchoWrite 核心庫初始化中，請稍候...", Toast.LENGTH_SHORT).show()

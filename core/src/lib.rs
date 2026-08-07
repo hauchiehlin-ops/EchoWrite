@@ -58,6 +58,14 @@ pub fn initialize(whisper_path: Option<String>, llm_path: Option<String>) -> Res
     Ok(())
 }
 
+/// 設定模型存放目錄（供行動端/沙盒指定 App 專屬資料夾使用）
+#[uniffi::export]
+pub fn set_model_dir(dir_path: String) {
+    if !dir_path.is_empty() {
+        models::set_model_dir(std::path::PathBuf::from(dir_path));
+    }
+}
+
 /// 設定模型效能分級（Turbo: 200ms 極速 / Pro: 旗艦高精度）
 #[uniffi::export]
 pub fn set_model_profile(profile: models::ModelProfile) {
