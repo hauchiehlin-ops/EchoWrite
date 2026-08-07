@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
   detectWebGPUStatus();
 
   // 1. 載入並還原已選定的風格與模型
-  chrome.storage.local.get(['selectedStyle', 'selectedModel', 'history'], (data) => {
+  chrome.storage.local.get(['selectedStyle', 'selectedModel', 'history', 'modelLoadState', 'modelLoadModel', 'modelLoadError'], (data) => {
     if (data.selectedStyle) {
       styleCards.forEach(card => {
         if (card.dataset.style === data.selectedStyle) {
@@ -28,6 +28,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // 2. 載入歷史記錄列表
     if (data.history && data.history.length > 0) {
       renderHistory(data.history);
+    }
+
+    renderModelLoadState(data.modelLoadState, data.modelLoadModel, data.modelLoadError);
+  });
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    if (changes.modelLoadState || changes.modelLoadModel || changes.modelLoadError) {
+      chrome.storage.local.get(['modelLoadState', 'modelLoadModel', 'modelLoadError'], (data) => {
+        renderModelLoadState(data.modelLoadState, data.modelLoadModel, data.modelLoadError);
+      });
     }
   });
 
@@ -84,6 +95,43 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+function renderModelLoadState(state, model, error) {
+  const statusText = document.getElementById('statusText');
+  const statusDot = document.getElementById('statusDot');
+  const badge = document.getElementById('gpuBadge');
+
+  if (!statusText || !statusDot || !badge) return;
+
+  if (!state) return;
+
+  if (state === 'loading') {
+    statusDot.className = 'status-dot yellow';
+    badge.textContent = '模型載入中';
+    statusText.textContent = model ? `正在載入 ${model}...` : '正在載入本地模型...';
+    return;
+  }
+
+  if (state === 'ready') {
+    statusDot.className = 'status-dot green';
+    badge.textContent = 'WebGPU Local';
+    statusText.textContent = model ? `模型已就緒：${model}` : '本地模型已就緒';
+    return;
+  }
+
+  if (state === 'failed') {
+    statusDot.className = 'status-dot red';
+    badge.textContent = '模型失敗';
+    statusText.textContent = error ? `模型載入失敗：${error}` : '模型載入失敗，請重試';
+    return;
+  }
+
+  if (state === 'fallback') {
+    statusDot.className = 'status-dot yellow';
+    badge.textContent = '規則排版模式';
+    statusText.textContent = '此裝置不支援 WebGPU，將使用規則排版降級';
+  }
+}
 
 // 偵測真實的 WebGPU 可用性與 GPU 資訊，取代原本寫死的「WebGPU 引擎就緒」文字
 // （無論瀏覽器是否真的支援 WebGPU 都顯示同樣的字樣是誤導使用者的）。

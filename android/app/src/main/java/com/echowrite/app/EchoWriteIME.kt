@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
@@ -33,6 +34,7 @@ import kotlin.math.sqrt
  * 5. 滑動取消手勢與防呆捨棄。
  */
 class EchoWriteIME : InputMethodService() {
+    private val tag = "EchoWriteIME"
     private var isRecording = false
     private var recordButton: Button? = null
     private var statusText: TextView? = null
@@ -72,6 +74,7 @@ class EchoWriteIME : InputMethodService() {
 
         EchoWriteCore.setModelDir(modelsDir.absolutePath)
         EchoWriteCore.initialize("", "")
+        EchoWriteCore.setSavedModelProfile(this, EchoWriteCore.getSavedModelProfile(this))
         tempAudioFile = File(cacheDir, "temp_input.wav")
         currentStyle = EchoWriteCore.getSelectedStyle(this)
 
@@ -182,15 +185,23 @@ class EchoWriteIME : InputMethodService() {
 
         val poller = object : Runnable {
             override fun run() {
-                val w = EchoWriteCore.getModelDownloadProgress(EchoWriteCore.MODEL_KIND_WHISPER).split(":")
-                val l = EchoWriteCore.getModelDownloadProgress(EchoWriteCore.MODEL_KIND_LLM).split(":")
+                val w = EchoWriteCore.getModelDownloadProgress(EchoWriteCore.MODEL_KIND_WHISPER).split(":", limit = 4)
+                val l = EchoWriteCore.getModelDownloadProgress(EchoWriteCore.MODEL_KIND_LLM).split(":", limit = 4)
                 val wState = w.getOrNull(0)?.toIntOrNull() ?: 0
                 val lState = l.getOrNull(0)?.toIntOrNull() ?: 0
+                val wError = w.getOrNull(3)?.takeIf { it.isNotBlank() }.orEmpty()
+                val lError = l.getOrNull(3)?.takeIf { it.isNotBlank() }.orEmpty()
 
                 when {
                     wState == EchoWriteCore.MODEL_STATE_FAILED || lState == EchoWriteCore.MODEL_STATE_FAILED -> {
+                        val errorText = listOf(wError, lError).firstOrNull { it.isNotBlank() }.orEmpty()
                         recordButton?.text = "❌ 模型下載失敗"
-                        statusText?.text = "請檢查網路連線或開啟主 App 重新下載"
+                        statusText?.text = if (errorText.isNotBlank()) {
+                            "請檢查網路連線：${errorText.take(28)}"
+                        } else {
+                            "請檢查網路連線或開啟主 App 重新下載"
+                        }
+                        Log.e(tag, "Model download failed. whisper=$wError llm=$lError")
                         return
                     }
                     wState == EchoWriteCore.MODEL_STATE_READY && lState == EchoWriteCore.MODEL_STATE_READY -> {
@@ -200,9 +211,13 @@ class EchoWriteIME : InputMethodService() {
                     }
                     else -> {
                         val downloaded = (w.getOrNull(1)?.toLongOrNull() ?: 0L) + (l.getOrNull(1)?.toLongOrNull() ?: 0L)
-                        val total = ((w.getOrNull(2)?.toLongOrNull() ?: 0L) + (l.getOrNull(2)?.toLongOrNull() ?: 0L)).coerceAtLeast(1L)
-                        val percent = (downloaded * 100 / total).toInt()
-                        recordButton?.text = "⬇️ 下載模型中 $percent%"
+                        val total = (w.getOrNull(2)?.toLongOrNull() ?: 0L) + (l.getOrNull(2)?.toLongOrNull() ?: 0L)
+                        val hasKnownTotal = total > 0
+                        val percent = if (hasKnownTotal) (downloaded * 100 / total).toInt().coerceIn(0, 100) else 0
+                        recordButton?.text = if (hasKnownTotal) "⬇️ 下載模型中 $percent%" else "⬇️ 續傳中..."
+                        if (wError.isNotBlank() || lError.isNotBlank()) {
+                            Log.w(tag, "Model download progress note. whisper=$wError llm=$lError")
+                        }
                         mainHandler.postDelayed(this, 1000)
                     }
                 }
@@ -259,6 +274,36 @@ class EchoWriteIME : InputMethodService() {
         // 提取游標前文情境 Context
         lastRecordedContextBefore = currentInputConnection?.getTextBeforeCursor(150, 0)?.toString() ?: ""
 
+        val sampleRate = 16000
+        val channelConfig = AudioFormat.CHANNEL_IN_MONO
+        val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+        val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        if (bufferSize <= 0) {
+            Log.e(tag, "AudioRecord buffer init failed: bufferSize=$bufferSize")
+            previewText?.text = "⚠️ 無法初始化麥克風緩衝區"
+            previewText?.setTextColor(Color.parseColor("#FF9500"))
+            cleanupRecordingResources()
+            return
+        }
+
+        try {
+            audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                channelConfig,
+                audioFormat,
+                bufferSize
+            )
+            audioRecord?.startRecording()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Log.e(tag, "AudioRecord start failed", e)
+            previewText?.text = "⚠️ 麥克風啟動失敗：${e.message ?: "未知錯誤"}"
+            previewText?.setTextColor(Color.parseColor("#FF9500"))
+            cleanupRecordingResources()
+            return
+        }
+
         triggerHaptic(40)
 
         isRecording = true
@@ -274,30 +319,6 @@ class EchoWriteIME : InputMethodService() {
         currentInputConnection?.setComposingText("📝 [語音輸入辨識中...]", 1)
 
         startTimer()
-
-        val sampleRate = 16000
-        val channelConfig = AudioFormat.CHANNEL_IN_MONO
-        val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-        val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
-        if (bufferSize <= 0) {
-            cancelRecording()
-            return
-        }
-
-        try {
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                sampleRate,
-                channelConfig,
-                audioFormat,
-                bufferSize
-            )
-            audioRecord?.startRecording()
-        } catch (e: Exception) {
-            e.printStackTrace()
-            cancelRecording()
-            return
-        }
 
         thread {
             val audioData = ShortArray(bufferSize)
@@ -326,6 +347,26 @@ class EchoWriteIME : InputMethodService() {
                 writeWavHeader(audioFile, totalBytesWritten)
             }
         }
+    }
+
+    private fun cleanupRecordingResources() {
+        timerRunnable?.let { mainHandler.removeCallbacks(it) }
+        waveformView?.reset()
+
+        try {
+            audioRecord?.stop()
+        } catch (_: Exception) {
+        }
+        try {
+            audioRecord?.release()
+        } catch (_: Exception) {
+        }
+        audioRecord = null
+
+        isRecording = false
+        currentInputConnection?.setComposingText("", 0)
+        currentInputConnection?.finishComposingText()
+        setIdleState()
     }
 
     private fun startTimer() {

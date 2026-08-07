@@ -5,9 +5,10 @@
 // Keyboard Extension / Service Worker 等短生命週期環境中阻塞主執行緒。
 
 use lazy_static::lazy_static;
+use reqwest::header::{CONTENT_RANGE, RANGE};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -48,10 +49,40 @@ lazy_static! {
     static ref OVERRIDE_MODEL_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 }
 
+fn profile_state_path() -> PathBuf {
+    model_dir().join("model_profile.txt")
+}
+
+fn persist_model_profile(profile: ModelProfile) {
+    let profile_value = match profile {
+        ModelProfile::Turbo => "0",
+        ModelProfile::Pro => "1",
+    };
+    let _ = fs::write(profile_state_path(), profile_value);
+}
+
+fn read_persisted_model_profile() -> Option<ModelProfile> {
+    let text = fs::read_to_string(profile_state_path()).ok()?;
+    match text.trim() {
+        "1" => Some(ModelProfile::Pro),
+        "0" => Some(ModelProfile::Turbo),
+        _ => None,
+    }
+}
+
+pub(crate) fn sync_model_profile_from_disk() {
+    if let Some(profile) = read_persisted_model_profile() {
+        if let Ok(mut lock) = ACTIVE_PROFILE.lock() {
+            *lock = profile;
+        }
+    }
+}
+
 pub fn set_model_dir(path: PathBuf) {
     if let Ok(mut lock) = OVERRIDE_MODEL_DIR.lock() {
         *lock = Some(path);
     }
+    sync_model_profile_from_disk();
 }
 
 pub fn set_override_model_dir(path: Option<PathBuf>) {
@@ -64,9 +95,11 @@ pub fn set_model_profile(profile: ModelProfile) {
     if let Ok(mut p) = ACTIVE_PROFILE.lock() {
         *p = profile;
     }
+    persist_model_profile(profile);
 }
 
 pub fn get_model_profile() -> ModelProfile {
+    sync_model_profile_from_disk();
     ACTIVE_PROFILE.lock().map(|p| *p).unwrap_or(ModelProfile::Turbo)
 }
 
@@ -171,6 +204,47 @@ fn set_progress(kind: ModelKind, progress: ModelProgress) {
     }
 }
 
+fn partial_model_path(kind: ModelKind) -> PathBuf {
+    model_path(kind).with_extension("part")
+}
+
+fn download_meta_path(kind: ModelKind) -> PathBuf {
+    let mut path = partial_model_path(kind);
+    path.set_extension("part.meta");
+    path
+}
+
+fn read_cached_total_bytes(kind: ModelKind) -> Option<u64> {
+    let text = fs::read_to_string(download_meta_path(kind)).ok()?;
+    text.trim().parse::<u64>().ok()
+}
+
+fn write_cached_total_bytes(kind: ModelKind, total_bytes: u64) {
+    let _ = fs::write(download_meta_path(kind), total_bytes.to_string());
+}
+
+fn clear_download_artifacts(kind: ModelKind) {
+    let _ = fs::remove_file(partial_model_path(kind));
+    let _ = fs::remove_file(download_meta_path(kind));
+}
+
+fn progress_from_disk(kind: ModelKind) -> Option<ModelProgress> {
+    let part_path = partial_model_path(kind);
+    if !part_path.is_file() {
+        return None;
+    }
+
+    let downloaded_bytes = fs::metadata(&part_path).ok()?.len();
+    let total_bytes = read_cached_total_bytes(kind).unwrap_or(0);
+
+    Some(ModelProgress {
+        downloaded_bytes,
+        total_bytes,
+        state: ModelDownloadState::Downloading,
+        error: None,
+    })
+}
+
 pub fn get_progress(kind: ModelKind) -> ModelProgress {
     if let Ok(map) = PROGRESS.lock() {
         if let Some(p) = map.get(&kind) {
@@ -178,6 +252,11 @@ pub fn get_progress(kind: ModelKind) -> ModelProgress {
         }
     }
     let is_ready = is_model_ready(kind);
+    if !is_ready {
+        if let Some(progress) = progress_from_disk(kind) {
+            return progress;
+        }
+    }
     let size = if is_ready {
         fs::metadata(model_path(kind)).map(|m| m.len()).unwrap_or(0)
     } else {
@@ -200,6 +279,7 @@ pub fn get_progress(kind: ModelKind) -> ModelProgress {
 pub fn start_download(kind: ModelKind) {
     if is_model_ready(kind) {
         let size = fs::metadata(model_path(kind)).map(|m| m.len()).unwrap_or(0);
+        clear_download_artifacts(kind);
         set_progress(
             kind,
             ModelProgress {
@@ -211,15 +291,17 @@ pub fn start_download(kind: ModelKind) {
         );
         return;
     }
-    if get_progress(kind).state == ModelDownloadState::Downloading {
+    if matches!(get_progress(kind).state, ModelDownloadState::Downloading) {
         return;
     }
 
+    let existing_bytes = fs::metadata(partial_model_path(kind)).map(|m| m.len()).unwrap_or(0);
+    let cached_total = read_cached_total_bytes(kind).unwrap_or(0);
     set_progress(
         kind,
         ModelProgress {
-            downloaded_bytes: 0,
-            total_bytes: 0,
+            downloaded_bytes: existing_bytes,
+            total_bytes: cached_total,
             state: ModelDownloadState::Downloading,
             error: None,
         },
@@ -246,7 +328,8 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("建立目錄失敗: {}", e))?;
     }
-    let tmp_dest = dest.with_extension("part");
+    let tmp_dest = partial_model_path(kind);
+    let existing_bytes = fs::metadata(&tmp_dest).map(|m| m.len()).unwrap_or(0);
 
     let client = reqwest::blocking::Client::builder()
         .user_agent("EchoWrite/1.0 (Android; Rust)")
@@ -254,20 +337,56 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
         .build()
         .map_err(|e| format!("網路客戶端初始化失敗: {}", e))?;
 
-    let response = client
-        .get(spec.url)
+    let mut request = client.get(spec.url);
+    if existing_bytes > 0 {
+        request = request.header(RANGE, format!("bytes={existing_bytes}-"));
+    }
+
+    let response = request
         .send()
         .map_err(|e| format!("下載連線失敗: {}", e))?;
 
-    if !response.status().is_success() {
+    let status = response.status();
+    if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
         return Err(format!("下載失敗: HTTP {}", response.status()));
     }
-    let total = response.content_length().unwrap_or(0);
+    let resumed = status == reqwest::StatusCode::PARTIAL_CONTENT && existing_bytes > 0;
+    let mut total = response.content_length().unwrap_or(0);
+    if let Some(content_range) = response.headers().get(CONTENT_RANGE) {
+        if let Ok(range_text) = content_range.to_str() {
+            if let Some((_, total_part)) = range_text.rsplit_once('/') {
+                if let Ok(parsed_total) = total_part.parse::<u64>() {
+                    total = parsed_total;
+                }
+            }
+        }
+    }
+    if total == 0 && resumed {
+        total = existing_bytes;
+    } else if resumed && total > 0 {
+        total = total.saturating_add(existing_bytes);
+    }
+    if total > 0 {
+        write_cached_total_bytes(kind, total);
+    }
 
-    let mut file = File::create(&tmp_dest).map_err(|e| format!("建立檔案失敗 {:?}: {}", tmp_dest, e))?;
+    let mut file = if resumed {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&tmp_dest)
+            .map_err(|e| format!("開啟續傳檔案失敗 {:?}: {}", tmp_dest, e))?
+    } else {
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp_dest)
+            .map_err(|e| format!("建立檔案失敗 {:?}: {}", tmp_dest, e))?
+    };
     let mut reader = response;
     let mut buffer = [0u8; 65536];
-    let mut downloaded: u64 = 0;
+    let mut downloaded: u64 = if resumed { existing_bytes } else { 0 };
 
     loop {
         let n = reader.read(&mut buffer).map_err(|e| format!("讀取資料失敗: {}", e))?;
@@ -301,6 +420,7 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
         let actual = sha256_of_file(&tmp_dest)?;
         if actual != expected {
             let _ = fs::remove_file(&tmp_dest);
+            clear_download_artifacts(kind);
             return Err(format!(
                 "Checksum mismatch: expected {}, got {}",
                 expected, actual
@@ -308,7 +428,11 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
         }
     }
 
+    if dest.exists() {
+        let _ = fs::remove_file(&dest);
+    }
     fs::rename(&tmp_dest, &dest).map_err(|e| e.to_string())?;
+    clear_download_artifacts(kind);
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     if let Some(coreml_url) = spec.coreml_encoder_url {
@@ -493,6 +617,23 @@ mod tests {
     }
 
     #[test]
+    fn test_get_progress_recovers_partial_download_from_disk() {
+        with_temp_model_dir(|_dir| {
+            let part_path = partial_model_path(ModelKind::Whisper);
+            if let Some(parent) = part_path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&part_path, b"partial-bytes").unwrap();
+            fs::write(download_meta_path(ModelKind::Whisper), b"1024").unwrap();
+
+            let progress = get_progress(ModelKind::Whisper);
+            assert_eq!(progress.state, ModelDownloadState::Downloading);
+            assert_eq!(progress.downloaded_bytes, b"partial-bytes".len() as u64);
+            assert_eq!(progress.total_bytes, 1024);
+        });
+    }
+
+    #[test]
     fn test_set_progress_is_isolated_per_kind() {
         with_temp_model_dir(|_dir| {
             set_progress(
@@ -527,6 +668,24 @@ mod tests {
             let progress = get_progress(ModelKind::Whisper);
             assert_eq!(progress.state, ModelDownloadState::Ready);
             assert_eq!(fs::read(&path).unwrap(), b"already downloaded");
+        });
+    }
+
+    #[test]
+    fn test_model_profile_persists_across_initialize() {
+        with_temp_model_dir(|_dir| {
+            set_model_profile(ModelProfile::Pro);
+            assert_eq!(get_model_profile(), ModelProfile::Pro);
+            assert_eq!(fs::read_to_string(profile_state_path()).unwrap().trim(), "1");
+
+            fs::write(profile_state_path(), "1").unwrap();
+            if let Ok(mut lock) = ACTIVE_PROFILE.lock() {
+                *lock = ModelProfile::Turbo;
+            }
+            assert_eq!(get_model_profile(), ModelProfile::Pro);
+
+            let _ = crate::initialize(None, None);
+            assert_eq!(get_model_profile(), ModelProfile::Pro);
         });
     }
 }

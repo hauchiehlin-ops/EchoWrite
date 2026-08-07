@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -35,6 +36,7 @@ import java.io.File
  * 6. 鍵盤啟用診斷與權限引導。
  */
 class MainActivity : AppCompatActivity() {
+    private val tag = "EchoWriteMainActivity"
     private val micRequestCode = 201
     private lateinit var tabLayout: TabLayout
     private lateinit var container: FrameLayout
@@ -52,6 +54,7 @@ class MainActivity : AppCompatActivity() {
             if (EchoWriteCore.isLibraryLoaded) {
                 EchoWriteCore.setModelDir(modelsDir.absolutePath)
                 EchoWriteCore.initialize("", "")
+                EchoWriteCore.setSavedModelProfile(this, EchoWriteCore.getSavedModelProfile(this))
             } else {
                 Toast.makeText(this, "EchoWrite 核心庫初始化中，請稍候...", Toast.LENGTH_SHORT).show()
             }
@@ -247,8 +250,10 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             tag = "btn_$kind"
             setOnClickListener {
+                isEnabled = false
+                text = "⬇️ 下載啟動中..."
                 EchoWriteCore.startModelDownload(kind)
-                it.visibility = View.GONE
+                updateModelProgress(kind)
             }
         }
         card.addView(downloadBtn)
@@ -269,11 +274,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateModelProgress(kind: Int) {
         val progressRaw = EchoWriteCore.getModelDownloadProgress(kind)
-        val raw = progressRaw.split(":")
+        val raw = progressRaw.split(":", limit = 4)
         val state = raw.getOrNull(0)?.toIntOrNull() ?: 0
         val downloaded = raw.getOrNull(1)?.toLongOrNull() ?: 0L
-        val total = (raw.getOrNull(2)?.toLongOrNull() ?: 0L).coerceAtLeast(1L)
-        val percent = ((downloaded * 100) / total).toInt()
+        val total = (raw.getOrNull(2)?.toLongOrNull() ?: 0L)
+        val error = raw.getOrNull(3)?.takeIf { it.isNotBlank() }.orEmpty()
+        val hasKnownTotal = total > 0
+        val percent = if (hasKnownTotal) ((downloaded * 100) / total).toInt().coerceIn(0, 100) else 0
 
         val statusView = container.findViewWithTag<TextView>("status_$kind")
         val progressView = container.findViewWithTag<ProgressBar>("progress_$kind")
@@ -282,37 +289,57 @@ class MainActivity : AppCompatActivity() {
 
         val mbDownloaded = String.format("%.1f", downloaded.toDouble() / (1024 * 1024))
         val mbTotal = String.format("%.1f", total.toDouble() / (1024 * 1024))
-        bytesView?.text = "$mbDownloaded MB / $mbTotal MB"
-        progressView?.progress = percent
+        bytesView?.text = if (hasKnownTotal) "$mbDownloaded MB / $mbTotal MB" else "$mbDownloaded MB / ? MB"
+        progressView?.isIndeterminate = !hasKnownTotal && state == EchoWriteCore.MODEL_STATE_DOWNLOADING
+        progressView?.progress = if (hasKnownTotal) percent else 0
+
+        if (error.isNotBlank() && state == EchoWriteCore.MODEL_STATE_FAILED) {
+            Log.e(tag, "Model $kind download failed: $error")
+        }
 
         when (state) {
             EchoWriteCore.MODEL_STATE_READY -> {
                 statusView?.text = "● 已就緒"
                 statusView?.setTextColor(Color.parseColor("#4CD964"))
-                btn?.visibility = View.GONE
+                btn?.visibility = View.VISIBLE
+                btn?.isEnabled = false
+                btn?.text = "已下載"
                 progressView?.progress = 100
+                progressView?.isIndeterminate = false
             }
             EchoWriteCore.MODEL_STATE_DOWNLOADING -> {
-                statusView?.text = "⬇️ 下載中 $percent%"
+                statusView?.text = if (hasKnownTotal) "⬇️ 下載中 $percent%" else "⬇️ 續傳中..."
                 statusView?.setTextColor(Color.parseColor("#00E5FF"))
-                btn?.visibility = View.GONE
+                btn?.visibility = View.VISIBLE
+                btn?.isEnabled = false
+                btn?.text = "下載中..."
+                if (error.isNotBlank()) {
+                    Log.w(tag, "Model $kind download progress note: $error")
+                }
             }
             EchoWriteCore.MODEL_STATE_VERIFYING -> {
                 statusView?.text = "校驗中..."
                 statusView?.setTextColor(Color.parseColor("#FF9500"))
-                btn?.visibility = View.GONE
+                btn?.visibility = View.VISIBLE
+                btn?.isEnabled = false
+                btn?.text = "校驗中..."
+                progressView?.isIndeterminate = true
             }
             EchoWriteCore.MODEL_STATE_FAILED -> {
-                statusView?.text = "❌ 失敗"
+                statusView?.text = if (error.isNotBlank()) "❌ 失敗：${error.take(24)}" else "❌ 失敗"
                 statusView?.setTextColor(Color.parseColor("#FF3B30"))
                 btn?.visibility = View.VISIBLE
+                btn?.isEnabled = true
                 btn?.text = "重新下載"
+                progressView?.isIndeterminate = false
             }
             else -> {
                 statusView?.text = "未下載"
                 statusView?.setTextColor(Color.parseColor("#8F9FB8"))
                 btn?.visibility = View.VISIBLE
+                btn?.isEnabled = true
                 btn?.text = "下載模型"
+                progressView?.isIndeterminate = false
             }
         }
     }

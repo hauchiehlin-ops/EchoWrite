@@ -2,6 +2,19 @@
 
 let offscreenReady = false;
 
+async function persistModelLoadState(state, model, error = "") {
+  try {
+    await chrome.storage.local.set({
+      modelLoadState: state,
+      modelLoadModel: model || "",
+      modelLoadError: error || "",
+      modelLoadUpdatedAt: Date.now(),
+    });
+  } catch (e) {
+    console.warn('EchoWrite: Failed to persist model load state:', e);
+  }
+}
+
 // ============================================================
 // 擴充套件安裝/更新時，自動將 content script 注入所有已開啟的分頁
 // （解決重新載入擴充套件後，舊分頁無 content script 的問題）
@@ -232,7 +245,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true; // 異步回應
     } else if (message.type === 'model-changed') {
       console.log('EchoWrite: model-changed received, forwarding to offscreen');
+      persistModelLoadState('loading', message.model || '');
       sendToOffscreen({ target: 'offscreen', type: 'model-changed', model: message.model });
+    } else if (message.type === 'model-load-state') {
+      persistModelLoadState(message.state || '', message.model || '', message.error || '');
     } else if (message.type === 'save-history') {
       chrome.storage.local.get(['history'], (data) => {
         const history = data.history || [];

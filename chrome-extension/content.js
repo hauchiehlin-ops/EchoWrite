@@ -202,6 +202,18 @@ chrome.runtime.onMessage.addListener((message) => {
         updateWidgetText(`💾 正在下載本地 AI 模型... ${message.progress}%`);
         break;
 
+      case 'model-load-state':
+        if (message.state === 'loading') {
+          updateWidgetText(message.model ? `🧠 正在載入 ${message.model}...` : "🧠 正在載入本地 AI 模型...");
+        } else if (message.state === 'ready') {
+          updateWidgetText(message.model ? `✅ ${message.model} 已就緒` : "✅ 本地模型已就緒");
+        } else if (message.state === 'failed') {
+          updateWidgetText(`⚠️ 模型載入失敗${message.error ? `：${message.error}` : ""}`);
+        } else if (message.state === 'fallback') {
+          updateWidgetText("⚠️ 此瀏覽器將使用規則排版模式");
+        }
+        break;
+
       case 'processing-started':
         updateWidgetText("✨ AI 正在進行台灣語意格式段落重塑...");
         break;

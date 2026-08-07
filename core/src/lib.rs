@@ -52,6 +52,7 @@ pub fn initialize(whisper_path: Option<String>, llm_path: Option<String>) -> Res
     let mut state = STATE.lock().map_err(|e| EchoWriteError::InitError { message: e.to_string() })?;
     state.whisper_model_path = whisper_path.or_else(|| models::default_model_path(models::ModelKind::Whisper));
     state.llm_model_path = llm_path.or_else(|| models::default_model_path(models::ModelKind::Llm));
+    models::sync_model_profile_from_disk();
 
     // 初始化 SQLite 資料庫
     database::init_db().map_err(|e| EchoWriteError::InitError { message: e.to_string() })?;

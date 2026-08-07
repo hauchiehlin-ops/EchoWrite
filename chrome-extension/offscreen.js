@@ -61,6 +61,16 @@ async function loadWebLLMModule() {
   }
 }
 
+function persistModelLoadState(state, model = "", error = "") {
+  chrome.runtime.sendMessage({
+    target: 'background',
+    type: 'model-load-state',
+    state,
+    model,
+    error,
+  }).catch(() => {});
+}
+
 // 初始化 WebGPU MLC 引擎
 async function initWebLLM() {
   if (llmEngine) return llmEngine;
@@ -69,6 +79,7 @@ async function initWebLLM() {
   initPromise = (async () => {
     if (!navigator.gpu) {
       console.warn("EchoWrite: 此瀏覽器不支援 WebGPU，將降級為規則排版模式。");
+      persistModelLoadState('fallback', '', 'WebGPU unavailable');
       return null;
     }
 
@@ -89,6 +100,7 @@ async function initWebLLM() {
       });
 
       console.log(`EchoWrite: 正在載入本地端模型 (${modelName})...`);
+      persistModelLoadState('loading', modelName);
       
       // 監聽加載進度
       engine.setInitProgressCallback((report) => {
@@ -102,9 +114,11 @@ async function initWebLLM() {
       await engine.reload(modelName);
       console.log(`EchoWrite: 本地 WebGPU 模型載入完成 (${modelName})！`);
       llmEngine = engine;
+      persistModelLoadState('ready', modelName);
       return llmEngine;
     } catch (error) {
       console.error("EchoWrite: 載入 WebLLM 失敗: ", error);
+      persistModelLoadState('failed', '', error?.message || String(error));
       llmEngine = null;
       initPromise = null; // 重置以允許下次重新嘗試
       return null;
@@ -528,10 +542,14 @@ chrome.runtime.onMessage.addListener((message) => {
       cancelRecording();
     } else if (message.type === 'model-changed') {
       console.log("EchoWrite: 模型設定變更，準備重新載入引擎: " + message.model);
+      persistModelLoadState('loading', message.model || '');
       // 清空舊引擎，觸發重新載入
       llmEngine = null;
       initPromise = null;
-      initWebLLM();
+      initWebLLM().catch((error) => {
+        console.error("EchoWrite: 重新載入模型失敗", error);
+        persistModelLoadState('failed', message.model || '', error?.message || String(error));
+      });
     }
   }
 });

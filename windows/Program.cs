@@ -152,6 +152,7 @@ namespace EchoWrite
                         MessageBoxIcon.Information
                     );
                 }
+                _currentProfile = echowrite_get_model_profile();
                 _isNativeCoreLoaded = true;
             }
             catch (DllNotFoundException ex)
