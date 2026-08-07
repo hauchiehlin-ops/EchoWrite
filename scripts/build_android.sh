@@ -14,33 +14,81 @@ if ! command -v cargo-ndk >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -z "${ANDROID_NDK_ROOT:-}" && -z "${ANDROID_NDK:-}" && -z "${NDK_ROOT:-}" ]]; then
-  if [[ -n "${ANDROID_NDK_HOME:-}" ]]; then
-    export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
-  elif [[ -n "${ANDROID_HOME:-}" && -d "$ANDROID_HOME/ndk/26.3.11579264" ]]; then
-    export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/26.3.11579264"
-  elif [[ -n "${ANDROID_SDK_ROOT:-}" && -d "$ANDROID_SDK_ROOT/ndk/26.3.11579264" ]]; then
-    export ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
-  elif [[ -d "$HOME/Library/Android/sdk/ndk/26.3.11579264" ]]; then
-    export ANDROID_NDK_ROOT="$HOME/Library/Android/sdk/ndk/26.3.11579264"
-  elif [[ -n "${ANDROID_HOME:-}" && -d "$ANDROID_HOME/ndk" ]]; then
-    export ANDROID_NDK_ROOT="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | head -n 1)"
-  elif [[ -n "${ANDROID_SDK_ROOT:-}" && -d "$ANDROID_SDK_ROOT/ndk" ]]; then
-    export ANDROID_NDK_ROOT="$(find "$ANDROID_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | head -n 1)"
-  elif [[ -d "$HOME/Library/Android/sdk/ndk" ]]; then
-    export ANDROID_NDK_ROOT="$(find "$HOME/Library/Android/sdk/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | head -n 1)"
-  fi
+detect_android_ndk_root() {
+  local sdk_root candidate ndk_dir ndk_root
+
+  for candidate in "${ANDROID_NDK_ROOT:-}" "${ANDROID_NDK:-}" "${NDK_ROOT:-}" "${ANDROID_NDK_HOME:-}"; do
+    if [[ -n "$candidate" && -d "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  for sdk_root in "${ANDROID_SDK_ROOT:-}" "${ANDROID_HOME:-}" "$HOME/Library/Android/sdk"; do
+    ndk_root=""
+
+    if [[ -n "$sdk_root" && -d "$sdk_root/ndk" ]]; then
+      while IFS= read -r ndk_dir; do
+        [[ -n "$ndk_dir" && -d "$ndk_dir" ]] && ndk_root="$ndk_dir"
+      done < <(find "$sdk_root/ndk" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V)
+    fi
+
+    if [[ -n "$ndk_root" ]]; then
+      printf '%s\n' "$ndk_root"
+      return 0
+    fi
+
+    if [[ -n "$sdk_root" && -d "$sdk_root/ndk-bundle" ]]; then
+      printf '%s\n' "$sdk_root/ndk-bundle"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+detect_android_ndk_prebuilt_tag() {
+  local os arch
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m)"
+
+  case "$os-$arch" in
+    darwin-arm64|darwin-aarch64)
+      printf '%s\n' "darwin-arm64"
+      ;;
+    darwin-x86_64|darwin-amd64)
+      printf '%s\n' "darwin-x86_64"
+      ;;
+    linux-x86_64|linux-amd64)
+      printf '%s\n' "linux-x86_64"
+      ;;
+    linux-arm64|linux-aarch64)
+      printf '%s\n' "linux-arm64"
+      ;;
+    *)
+      printf '%s\n' "$os-$arch"
+      ;;
+  esac
+}
+
+if [[ -z "${ANDROID_NDK_ROOT:-}" || ! -d "${ANDROID_NDK_ROOT:-}" ]]; then
+  export ANDROID_NDK_ROOT="$(detect_android_ndk_root)"
 fi
 
 if [[ -z "${ANDROID_NDK_ROOT:-}" || ! -d "$ANDROID_NDK_ROOT" ]]; then
+  local_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
   cat >&2 <<EOF
 Android NDK not found.
 
 Install it with:
-  sdkmanager --sdk_root="\$HOME/Library/Android/sdk" "ndk;26.3.11579264"
+  sdkmanager --sdk_root="$local_sdk_root" "ndk;26.3.11579264"
 
 Or set:
-  export ANDROID_NDK_ROOT="\$HOME/Library/Android/sdk/ndk/26.3.11579264"
+  export ANDROID_NDK_ROOT="$local_sdk_root/ndk/<installed-version>"
+
+Detected SDK roots:
+  ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>}
+  ANDROID_HOME=${ANDROID_HOME:-<unset>}
 EOF
   exit 1
 fi
@@ -52,7 +100,22 @@ echo "Using Android NDK: $ANDROID_NDK_ROOT"
 
 BLAS_SHIM_DIR="$ROOT_DIR/scripts/build/android-native-shims"
 mkdir -p "$BLAS_SHIM_DIR"
-"$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar" rcs "$BLAS_SHIM_DIR/libggml-blas.a"
+ANDROID_NDK_PREBUILT_TAG="$(detect_android_ndk_prebuilt_tag)"
+LLVM_AR="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$ANDROID_NDK_PREBUILT_TAG/bin/llvm-ar"
+
+if [[ ! -x "$LLVM_AR" ]]; then
+  cat >&2 <<EOF
+Android NDK llvm-ar not found.
+
+Expected:
+  $LLVM_AR
+
+Check that the selected NDK matches this host or set ANDROID_NDK_ROOT explicitly.
+EOF
+  exit 1
+fi
+
+"$LLVM_AR" rcs "$BLAS_SHIM_DIR/libggml-blas.a"
 
 ANDROID_MADV_FLAGS="-Dposix_madvise=madvise -DPOSIX_MADV_WILLNEED=MADV_WILLNEED -DPOSIX_MADV_RANDOM=MADV_RANDOM"
 export CFLAGS="${CFLAGS:-} $ANDROID_MADV_FLAGS"
@@ -85,4 +148,3 @@ for abi_pair in "arm64-v8a:aarch64-linux-android" "x86_64:x86_64-linux-android";
 done
 
 echo "=== Android Google Play 專用 .so 與 Kotlin/Manifest 骨架準備完成 ==="
-
