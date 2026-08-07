@@ -45,6 +45,46 @@ EOF
   exit 1
 fi
 
+detect_java_home() {
+  local candidate
+
+  if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]]; then
+    printf '%s\n' "$JAVA_HOME"
+    return 0
+  fi
+
+  for candidate in \
+    "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home" \
+    "/Library/Java/JavaVirtualMachines/openjdk-17.jdk/Contents/Home" \
+    "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home" \
+    "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+  do
+    if [[ -x "$candidate/bin/java" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  if command -v /usr/libexec/java_home >/dev/null 2>&1; then
+    candidate="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
+    if [[ -n "$candidate" && -x "$candidate/bin/java" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  if command -v java >/dev/null 2>&1; then
+    candidate="$(command -v java)"
+    candidate="$(cd "$(dirname "$candidate")/.." && pwd -P)"
+    if [[ -x "$candidate/bin/java" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 if ! command -v cargo-ndk >/dev/null 2>&1; then
   cat >&2 <<EOF
 cargo-ndk was not found.
@@ -114,10 +154,29 @@ if [[ -n "${ANDROID_NDK_ROOT:-}" ]]; then
   export ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
 fi
 
+JAVA_HOME_RESOLVED="$(detect_java_home || true)"
+if [[ -z "$JAVA_HOME_RESOLVED" ]]; then
+  cat >&2 <<EOF
+No valid JDK 17 was found.
+
+Install one of:
+  brew install openjdk@17
+  brew install temurin@17
+
+Or set:
+  export JAVA_HOME="/path/to/your/jdk"
+EOF
+  exit 1
+fi
+
+export JAVA_HOME="$JAVA_HOME_RESOLVED"
+export PATH="$JAVA_HOME/bin:$PATH"
+
 echo "=== EchoWrite Android package ==="
 echo "Application ID: $ANDROID_APPLICATION_ID"
 echo "Version:        $ANDROID_VERSION_NAME ($ANDROID_VERSION_CODE)"
 echo "Keystore:       $ANDROID_KEYSTORE_PATH"
+echo "Java Home:      $JAVA_HOME"
 
 echo "=== 1/4 Building Rust Android libraries ==="
 bash "$ROOT_DIR/scripts/build_android.sh"
