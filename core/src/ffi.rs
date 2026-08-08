@@ -250,6 +250,48 @@ pub extern "C" fn echowrite_format_only(text: *const c_char) -> *mut c_char {
 }
 
 #[no_mangle]
+pub extern "C" fn echowrite_polish_raw_text(
+    raw_text: *const c_char,
+    style: *const c_char,
+) -> *mut c_char {
+    let raw_text = match str_from_ptr(raw_text) {
+        Ok(v) => v,
+        Err(_) => return into_raw_c_string(String::new()),
+    };
+    let style = match str_from_ptr(style) {
+        Ok(v) => v,
+        Err(_) => return into_raw_c_string(String::new()),
+    };
+
+    match crate::polish_raw_text(raw_text, style) {
+        Ok(text) => into_raw_c_string(text),
+        Err(_) => into_raw_c_string(String::new()),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn echowrite_polish_raw_text_with_context(
+    raw_text: *const c_char,
+    style: *const c_char,
+    context: *const c_char,
+) -> *mut c_char {
+    let raw_text = match str_from_ptr(raw_text) {
+        Ok(v) => v,
+        Err(_) => return into_raw_c_string(String::new()),
+    };
+    let style = match str_from_ptr(style) {
+        Ok(v) => v,
+        Err(_) => return into_raw_c_string(String::new()),
+    };
+    let context = opt_str_from_ptr(context);
+
+    match crate::polish_raw_text_with_context(raw_text, style, context) {
+        Ok(text) => into_raw_c_string(text),
+        Err(_) => into_raw_c_string(String::new()),
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn echowrite_set_model_profile(profile_id: c_int) {
     let profile = if profile_id == 1 {
         crate::ModelProfile::Pro

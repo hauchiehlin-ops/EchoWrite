@@ -15,6 +15,9 @@ private func c_echowrite_stop_recording_and_process(_ style: UnsafePointer<CChar
 @_silgen_name("echowrite_process_audio_file")
 private func c_echowrite_process_audio_file(_ audioPath: UnsafePointer<CChar>, _ style: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("echowrite_polish_raw_text")
+private func c_echowrite_polish_raw_text(_ rawText: UnsafePointer<CChar>, _ style: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("echowrite_free_string")
 private func c_echowrite_free_string(_ ptr: UnsafeMutablePointer<CChar>?)
 
@@ -115,6 +118,17 @@ func ewProcessAudioFile(audioPath: String, style: String) throws -> String {
     let ptr = audioPath.withCString { audio in
         style.withCString { styleString in
             c_echowrite_process_audio_file(audio, styleString)
+        }
+    }
+    guard let ptr else { return "" }
+    defer { c_echowrite_free_string(ptr) }
+    return String(cString: ptr)
+}
+
+func ewPolishRawText(rawText: String, style: String) throws -> String {
+    let ptr = rawText.withCString { raw in
+        style.withCString { styleString in
+            c_echowrite_polish_raw_text(raw, styleString)
         }
     }
     guard let ptr else { return "" }

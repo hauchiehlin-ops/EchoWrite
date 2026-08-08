@@ -30,6 +30,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>EchoWrite 需要使用麥克風將語音轉成文字。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>EchoWrite 需要使用語音辨識技術來即時將語音轉換為文字。</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

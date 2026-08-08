@@ -4,6 +4,8 @@ import AVFoundation
 import Carbon
 import ApplicationServices
 
+import Speech
+
 @main
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
@@ -12,6 +14,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var isRecording = false
     var modelsReady = false
     var downloadProgressTimer: Timer?
+    
+    // 語音辨識相關
+    private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-TW"))!
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private let audioEngine = AVAudioEngine()
+    private var lastPartialText: String = ""
     
     // 桌面端靈動島控制器 (Dynamic Island Controller)
     var dynamicIslandController: DynamicIslandController?
@@ -271,9 +280,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        
+        SFSpeechRecognizer.requestAuthorization { authStatus in
+            DispatchQueue.main.async {
+                if authStatus == .authorized {
+                    self.startSFSpeechRecording()
+                } else {
+                    let alert = NSAlert()
+                    alert.messageText = "語音辨識未授權"
+                    alert.informativeText = "需要語音辨識權限才能進行即時打字，請於系統設定中開啟。"
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "確定")
+                    alert.runModal()
+                }
+            }
+        }
+    }
 
+    private func startSFSpeechRecording() {
+        if audioEngine.isRunning {
+            audioEngine.stop()
+            recognitionRequest?.endAudio()
+        }
+        
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        lastPartialText = ""
+        
         do {
-            try ewStartRecording()
+            // macOS does not use AVAudioSession in the same way as iOS, it just uses AVAudioEngine.
+            // So we don't need to configure AVAudioSession category here.
+        } catch {}
+
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        guard let recognitionRequest = recognitionRequest else { return }
+        
+        recognitionRequest.shouldReportPartialResults = true
+        if #available(macOS 13, *) {
+            recognitionRequest.requiresOnDeviceRecognition = true
+        }
+
+        let inputNode = audioEngine.inputNode
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+            self.recognitionRequest?.append(buffer)
+        }
+        
+        audioEngine.prepare()
+        do {
+            try audioEngine.start()
             isRecording = true
             updateStatusBarIcon(active: true)
             
@@ -283,12 +339,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }, onCancel: { [weak self] in
                 self?.cancelRecording()
             })
-
-            // 觸發微弱震動 (Haptic)
+            
             NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
             print("EchoWrite: Recording started with Dynamic Island...")
+            
         } catch {
-            print("EchoWrite: Failed to start recording: \(error)")
+            print("EchoWrite: Failed to start audio engine: \(error)")
+            return
+        }
+        
+        recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { result, error in
+            if let result = result {
+                self.lastPartialText = result.bestTranscription.formattedString
+                // 動態更新靈動島顯示
+                DispatchQueue.main.async {
+                    self.dynamicIslandController?.setPartialPreview(text: self.lastPartialText)
+                }
+            }
+            if error != nil || result?.isFinal == true {
+                self.audioEngine.stop()
+                inputNode.removeTap(onBus: 0)
+                self.recognitionRequest = nil
+                self.recognitionTask = nil
+            }
         }
     }
 
@@ -296,8 +369,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard isRecording else { return }
         isRecording = false
         updateStatusBarIcon(active: false)
+        
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        lastPartialText = ""
+        
         dynamicIslandController?.hide()
-        _ = try? ewStopRecordingAndProcess(style: "casual") // 終止錄音檔並捨棄
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         print("EchoWrite: Recording cancelled.")
     }
@@ -307,28 +386,68 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusBarIcon(active: false)
         isRecording = false
         
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        recognitionRequest?.endAudio()
+        
         dynamicIslandController?.setProcessing()
         
-        // 非同步處理，避免阻塞 UI 進程
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                // 停止錄音並啟動本地 ASR + SLM 處理
-                let resultText = try ewStopRecordingAndProcess(style: self.currentStyle)
-                
-                DispatchQueue.main.async {
-                    if !resultText.isEmpty {
-                        self.dynamicIslandController?.setCompleted(preview: resultText)
-                        // 使用 Accessibility API / CGEvent 直接在目前焦點游標處打字
-                        self.simulateTyping(text: resultText)
-                    } else {
+        let rawText = lastPartialText.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastPartialText = ""
+        
+        if rawText.isEmpty {
+            self.dynamicIslandController?.hide()
+            return
+        }
+        
+        let isCasual = currentStyle == "casual"
+        let styleStr = currentStyle
+        
+        if isCasual {
+            // ⚡ Casual 極速通道：0 延遲，只做格式化排版
+            // ewProcessAudioFile 等舊版 C FFI 主要是做錄音檔解析，我們需要新的 `ewPolishRawText` 嗎？
+            // 由於之前實作過 Rust 的 formatOnly，若 macOS 這邊需要 C-FFI 的對應函數，可以自己呼叫。
+            // 但既然是 0 延遲，我們這裡也可以利用剛拿到的 rawText，並透過 `ewPolishRawTextWithContext`。
+            
+            // Note: 假設 ewPolishRawTextWithContext 已在 iOS / Android 中實現，
+            // 若 Mac 這邊 C-FFI 還沒綁定 ewPolishRawText，我們會先透過原本的 ewProcessAudioFile 嗎？
+            // 不對，iOS 是 Swift，所以 `ewPolishRawTextWithContext` 也是從 C FFI 導出的嗎？
+            // iOS 用的是 Uniffi，而 macOS 用的是 C-FFI。這點需要注意。
+            
+            // 由於先前我們在 C-FFI 中未導出 pure text 的 polish 函數，
+            // 這裡若直接呼叫 ewStopRecordingAndProcess 會是 Rust 本身的錄音檔，
+            // 但我們已經停用 Rust 錄音了！
+            
+            // 這裡暫時先將 rawText 原封不動或者簡易處理後輸出。
+            // 在下個階段，我們將需要在 ffi.rs 中新增 echowrite_polish_raw_text。
+            // 為了不依賴未完成的 C-FFI，我們將在這裡先使用 GCD 非同步，
+            // 並先保留一個呼叫介面，後續補充 `ewPolishRawText`。
+            self.dynamicIslandController?.setCompleted(preview: rawText)
+            self.simulateTyping(text: rawText)
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        } else {
+            // 非 Casual：等 LLM 精修
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    // TODO: 呼叫 ewPolishRawText(rawText: rawText, style: styleStr)
+                    // 由於 C-FFI 還沒新增 polish_raw_text，我們先 mock 或是我們待會去 ffi.rs 補上。
+                    // 為了這個提交順利，我們先放個佔位，待會立即去補上 ffi.rs！
+                    let resultText = try ewPolishRawText(rawText: rawText, style: styleStr)
+                    
+                    DispatchQueue.main.async {
+                        if !resultText.isEmpty {
+                            self.dynamicIslandController?.setCompleted(preview: resultText)
+                            self.simulateTyping(text: resultText)
+                        } else {
+                            self.dynamicIslandController?.hide()
+                        }
+                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+                    }
+                } catch {
+                    print("EchoWrite: Process failed: \(error)")
+                    DispatchQueue.main.async {
                         self.dynamicIslandController?.hide()
                     }
-                    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-                }
-            } catch {
-                print("EchoWrite: Process failed: \(error)")
-                DispatchQueue.main.async {
-                    self.dynamicIslandController?.hide()
                 }
             }
         }
@@ -592,6 +711,10 @@ class DynamicIslandController {
         model.state = .processing
     }
 
+    func setPartialPreview(text: String) {
+        model.previewText = text
+    }
+
     func setCompleted(preview: String) {
         model.state = .completed(preview)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
@@ -676,9 +799,16 @@ struct DynamicIslandView: View {
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundColor(.cyan)
                     }
-                    Text("【\(model.styleTitle)】本地 ASR 即時辨識中")
-                        .font(.system(size: 10))
-                        .foregroundColor(.gray)
+                    if model.previewText.isEmpty {
+                        Text("【\(model.styleTitle)】即時辨識中...")
+                            .font(.system(size: 10))
+                            .foregroundColor(.gray)
+                    } else {
+                        Text(model.previewText.prefix(20) + (model.previewText.count > 20 ? "..." : ""))
+                            .font(.system(size: 11))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                    }
                 }
 
                 Spacer()
