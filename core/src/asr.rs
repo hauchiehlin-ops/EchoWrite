@@ -1,7 +1,30 @@
-use whisper_rs::{WhisperContext, FullParams, SamplingStrategy};
+use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use lazy_static::lazy_static;
 
-/// 讀取 WAV 音訊檔並使用本地 Whisper 模型進行語音轉寫。
+lazy_static! {
+    /// 全域常駐 WhisperContext 快取，消滅每次語音轉寫時從磁碟重複讀取模型檔案的巨大 I/O 延遲
+    static ref WHISPER_CACHE: Mutex<Option<(String, Arc<WhisperContext>)>> = Mutex::new(None);
+}
+
+/// 獲取或快取載入 WhisperContext，達成 0ms 磁碟重載開銷
+pub fn get_or_load_whisper_context(model_path: &str) -> Result<Arc<WhisperContext>, String> {
+    let mut cache = WHISPER_CACHE.lock().map_err(|e| format!("Whisper 快取鎖定失敗: {:?}", e))?;
+    if let Some((ref cached_path, ref ctx)) = *cache {
+        if cached_path == model_path {
+            return Ok(ctx.clone());
+        }
+    }
+
+    let ctx = WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
+        .map_err(|e| format!("無法載入 Whisper 模型 (路徑: {}): {:?}", model_path, e))?;
+    let arc_ctx = Arc::new(ctx);
+    *cache = Some((model_path.to_string(), arc_ctx.clone()));
+    Ok(arc_ctx)
+}
+
+/// 讀取 WAV 音訊檔並使用本地常駐 Whisper 模型進行語音轉寫。
 /// `custom_vocabulary` 會拼接為 Whisper 的 initial prompt，引導 ASR 將發音相近的
 /// 詞彙精確辨識為使用者自訂的專有名詞（人名、產品名等），降低 WER。
 pub fn transcribe(audio_path: String, model_path: &str, custom_vocabulary: &[String]) -> Result<String, String> {
@@ -23,9 +46,8 @@ pub fn transcribe(audio_path: String, model_path: &str, custom_vocabulary: &[Str
         })
         .collect();
 
-    // 2. 載入本地 Whisper 模型
-    let ctx = WhisperContext::new_with_params(model_path, whisper_rs::WhisperContextParameters::default())
-        .map_err(|e| format!("無法載入 Whisper 模型: {:?}", e))?;
+    // 2. 獲取常駐記憶體之 Whisper 模型實例 (0ms 磁碟 I/O)
+    let ctx = get_or_load_whisper_context(model_path)?;
     
     let mut state = ctx.create_state()
         .map_err(|e| format!("無法建立推理狀態: {:?}", e))?;

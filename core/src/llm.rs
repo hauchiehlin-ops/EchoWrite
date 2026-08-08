@@ -3,6 +3,36 @@ use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::model::params::LlamaModelParams;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use lazy_static::lazy_static;
+
+lazy_static! {
+    /// 全域 Llama 後端單例實例
+    static ref GLOBAL_BACKEND: LlamaBackend = LlamaBackend::init().expect("無法初始化 Llama 全域後端");
+    /// 全域常駐 LlamaModel 快取，消滅每次語音重塑時從硬碟重複讀取 GGUF 模型的 2~4 秒 I/O 開銷
+    static ref LLM_CACHE: Mutex<Option<(String, Arc<LlamaModel>)>> = Mutex::new(None);
+}
+
+/// 獲取或快取載入 LlamaModel，達成 0ms 磁碟重載開銷
+pub fn get_or_load_llama_model(model_path: &str) -> Result<Arc<LlamaModel>, String> {
+    let mut cache = LLM_CACHE.lock().map_err(|e| format!("LLM 快取鎖定失敗: {:?}", e))?;
+    if let Some((ref cached_path, ref model)) = *cache {
+        if cached_path == model_path {
+            return Ok(model.clone());
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let model_params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    let model_params = LlamaModelParams::default();
+
+    let model = LlamaModel::load_from_file(&GLOBAL_BACKEND, Path::new(model_path), &model_params)
+        .map_err(|e| format!("無法載入 GGUF 模型 (路徑: {}): {:?}", model_path, e))?;
+    let arc_model = Arc::new(model);
+    *cache = Some((model_path.to_string(), arc_model.clone()));
+    Ok(arc_model)
+}
 
 pub fn get_system_prompt_for_style(style: &str) -> &'static str {
     match style.trim().to_lowercase().as_str() {
@@ -49,9 +79,9 @@ pub fn get_system_prompt_for_style(style: &str) -> &'static str {
              2. 自動斷行與編號清單：\n\
                 - 必須將每項核心論點、代辦步驟或會議決策分行獨立，使用 Markdown 數字編號（1. 2. 3.）或符號（- ）。\n\
                 - 遇到「第一、第二」、「首先、其次、最後」或轉折詞，一律自動換行並建立新編號項目。\n\
-             3. 語句精練：去除所有廢話與重複內容，每點簡明扼要、直指重點。\n\
-             4. 採用台灣繁體中文與全形標點。\n\
-             5. 直接輸出條列清單，不加任何前言或結尾閒聊。"
+                - 語句精練：去除所有廢話與重複內容，每點簡明扼要、直指重點。\n\
+             3. 採用台灣繁體中文與全形標點。\n\
+             4. 直接輸出條列清單，不加任何前言或結尾閒聊。"
         }
         _ => {
             // 預設 casual / smart 極簡口語潤飾模式
@@ -84,20 +114,13 @@ pub fn polish_text_with_context(
     context_before: Option<String>,
     tone_samples: &[String],
 ) -> Result<String, String> {
-    let backend = LlamaBackend::init()
-        .map_err(|e| format!("無法初始化 Llama 後端: {:?}", e))?;
+    // 1. 取得常駐模型實例 (0ms 磁碟重載開銷)
+    let model = get_or_load_llama_model(model_path)?;
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    let model_params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    let model_params = LlamaModelParams::default();
-
-    let model = LlamaModel::load_from_file(&backend, Path::new(model_path), &model_params)
-        .map_err(|e| format!("無法載入 GGUF 模型 (路徑: {}): {:?}", model_path, e))?;
-
+    // 2. 建立推論上下文
     let ctx_params = LlamaContextParams::default()
         .with_n_ctx(Some(std::num::NonZeroU32::new(2048).unwrap()));
-    let mut ctx = model.new_context(&backend, ctx_params)
+    let mut ctx = model.new_context(&GLOBAL_BACKEND, ctx_params)
         .map_err(|e| format!("無法建立模型上下文: {:?}", e))?;
 
     let system_prompt = get_system_prompt_for_style(&style);
@@ -108,7 +131,7 @@ pub fn polish_text_with_context(
         let trimmed_ctx = ctx_str.trim();
         if !trimmed_ctx.is_empty() {
             let sample_len = trimmed_ctx.chars().count();
-            let start_idx = sample_len.saturating_sub(150);
+            let start_idx = sample_len.saturating_sub(120);
             let recent_ctx: String = trimmed_ctx.chars().skip(start_idx).collect();
             user_content.push_str(&format!("【前文脈絡/上下文】:\n{}\n\n", recent_ctx));
         }
@@ -116,7 +139,7 @@ pub fn polish_text_with_context(
 
     if !tone_samples.is_empty() {
         user_content.push_str("【個人喜好風格範例】:\n");
-        for s in tone_samples.iter().take(3) {
+        for s in tone_samples.iter().take(2) {
             user_content.push_str(&format!("- {}\n", s));
         }
         user_content.push('\n');
@@ -148,8 +171,14 @@ pub fn polish_text_with_context(
     let mut next_token = sampler.sample(&ctx, (tokens.len() - 1) as i32);
     let eos_token = model.token_eos();
     
-    let max_tokens = 512;
-    let mut token_count = 0;
+    // 動態根據輸入長度計算 Token 生成上限，大幅加速短句推論
+    let raw_char_count = raw_text.chars().count();
+    let max_tokens: usize = if style == "bilingual" || style == "email" || style == "formal" {
+        512.min(raw_char_count * 4 + 64)
+    } else {
+        256.min(raw_char_count * 2 + 32)
+    };
+    let mut token_count: usize = 0;
     
     while next_token != eos_token && token_count < max_tokens {
         if let Ok(piece) = model.token_to_piece(next_token, &mut decoder, false, None) {
