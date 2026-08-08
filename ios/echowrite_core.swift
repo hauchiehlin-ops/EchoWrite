@@ -1186,6 +1186,31 @@ public func isModelReady(kind: ModelKind) -> Bool {
     )
 })
 }
+/**
+ * 直接對已辨識文字進行語意重塑（跳過 Whisper ASR）。
+ * 供平台原生 ASR（iOS SFSpeechRecognizer / Android SpeechRecognizer）使用。
+ * casual 風格不呼叫 LLM，純規則引擎 < 10ms 瞬間回傳。
+ */
+public func polishRawText(rawText: String, style: String)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_polish_raw_text(
+        FfiConverterString.lower(rawText),
+        FfiConverterString.lower(style),$0
+    )
+})
+}
+/**
+ * 帶前文脈絡的語意重塑（跳過 Whisper ASR）
+ */
+public func polishRawTextWithContext(rawText: String, style: String, contextBefore: String?)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+    uniffi_echowrite_core_fn_func_polish_raw_text_with_context(
+        FfiConverterString.lower(rawText),
+        FfiConverterString.lower(style),
+        FfiConverterOptionString.lower(contextBefore),$0
+    )
+})
+}
 public func processAudioFile(audioPath: String, style: String)throws  -> String {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
     uniffi_echowrite_core_fn_func_process_audio_file(
@@ -1316,6 +1341,12 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_is_model_ready() != 52597) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_polish_raw_text() != 44865) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_echowrite_core_checksum_func_polish_raw_text_with_context() != 3165) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_process_audio_file() != 39260) {

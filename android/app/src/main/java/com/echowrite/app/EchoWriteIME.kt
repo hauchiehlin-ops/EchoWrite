@@ -6,6 +6,11 @@ import android.inputmethodservice.InputMethodService
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.content.Intent
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -47,8 +52,9 @@ class EchoWriteIME : InputMethodService() {
     private val styleButtons = mutableMapOf<EchoWriteStyle, TextView>()
     private var currentStyle = EchoWriteStyle.CASUAL
 
-    private var audioRecord: AudioRecord? = null
-    private var tempAudioFile: File? = null
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var lastPartialText: String = ""
+    private var lastRecordedContextBefore: String = ""
     private var modelsReady = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var progressPoller: Runnable? = null
@@ -347,6 +353,106 @@ class EchoWriteIME : InputMethodService() {
 
     private var lastRecordedContextBefore: String = ""
 
+    private fun startRecording() {
+        if (!modelsReady) {
+            recordButton?.text = "⬇️ 模型下載中，請稍候..."
+            return
+        }
+
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            recordButton?.text = "❌ 請至 EchoWrite App 開啟麥克風權限"
+            return
+        }
+
+        // 提取游標前文情境 Context
+        lastRecordedContextBefore = currentInputConnection?.getTextBeforeCursor(150, 0)?.toString() ?: ""
+        lastPartialText = ""
+
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            previewText?.text = "⚠️ 語音辨識器目前不可用，請確認系統設定"
+            previewText?.setTextColor(Color.parseColor("#FF9500"))
+            return
+        }
+
+        triggerHaptic(40)
+        isRecording = true
+        recordingStartMs = SystemClock.elapsedRealtime()
+        timerText?.text = "⏱ 00:00"
+        recordButton?.text = "⏹️ 說完即點擊完成"
+        recordButton?.setBackgroundResource(R.drawable.record_btn_recording_bg)
+        swipeHintText?.visibility = View.VISIBLE
+        previewText?.text = "🎙️ 「正在即時辨識說話內容...」"
+        previewText?.setTextColor(Color.parseColor("#00E5FF"))
+
+        startTimer()
+
+        mainHandler.post {
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-TW")
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            }
+
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+                setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {}
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {
+                        // rmsdB 範圍大概是 -2.0 到 10.0，映射到 amplitude 0..1
+                        val level = (rmsdB + 2f) / 12f
+                        waveformView?.updateAmplitude(level.coerceIn(0.1f, 1.0f))
+                    }
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() {}
+                    override fun onError(error: Int) {
+                        if (isRecording) {
+                            Log.e(tag, "SpeechRecognizer error: $error")
+                            // 錯誤代碼 7 代表沒有匹配到語音，不一定是壞事
+                        }
+                    }
+                    override fun onResults(results: Bundle?) {
+                        if (!isRecording) return
+                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        if (!matches.isNullOrEmpty()) {
+                            lastPartialText = matches[0]
+                        }
+                    }
+                    override fun onPartialResults(partialResults: Bundle?) {
+                        if (!isRecording) return
+                        val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        if (!matches.isNullOrEmpty()) {
+                            val text = matches[0]
+                            lastPartialText = text
+                            // 邊說邊顯示辨識結果
+                            currentInputConnection?.setComposingText(text, 1)
+                            previewText?.text = "🎙️ $text"
+                            previewText?.setTextColor(Color.parseColor("#E5E5EA"))
+                        }
+                    }
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+                startListening(intent)
+            }
+        }
+    }
+
+    private fun cleanupRecordingResources() {
+        timerRunnable?.let { mainHandler.removeCallbacks(it) }
+        waveformView?.reset()
+
+        mainHandler.post {
+            speechRecognizer?.stopListening()
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+        }
+
+        isRecording = false
+        currentInputConnection?.setComposingText("", 0)
+        currentInputConnection?.finishComposingText()
+        setIdleState()
+    }
+
     private fun triggerHaptic(durationMs: Long) {
         try {
             val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
@@ -359,136 +465,6 @@ class EchoWriteIME : InputMethodService() {
         } catch (e: Exception) {
             // 忽略無震動權限或裝置無震動馬達之例外
         }
-    }
-
-    private fun startRecording() {
-        if (!modelsReady) {
-            recordButton?.text = "⬇️ 模型下載中，請稍候..."
-            return
-        }
-
-        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            recordButton?.text = "❌ 請至 EchoWrite App 開啟麥克風權限"
-            return
-        }
-
-        val audioFile = tempAudioFile ?: return
-        if (audioFile.exists()) audioFile.delete()
-
-        // 提取游標前文情境 Context
-        lastRecordedContextBefore = currentInputConnection?.getTextBeforeCursor(150, 0)?.toString() ?: ""
-
-        val sampleRate = 16000
-        val channelConfig = AudioFormat.CHANNEL_IN_MONO
-        val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-        val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
-        if (bufferSize <= 0) {
-            Log.e(tag, "AudioRecord buffer init failed: bufferSize=$bufferSize")
-            previewText?.text = "⚠️ 無法初始化麥克風緩衝區"
-            previewText?.setTextColor(Color.parseColor("#FF9500"))
-            cleanupRecordingResources()
-            return
-        }
-
-        try {
-            val record = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                sampleRate,
-                channelConfig,
-                audioFormat,
-                bufferSize
-            )
-            if (record.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e(tag, "AudioRecord state not initialized")
-                previewText?.text = "⚠️ 麥克風未就緒或被其他應用程式佔用"
-                previewText?.setTextColor(Color.parseColor("#FF9500"))
-                try { record.release() } catch (_: Throwable) {}
-                cleanupRecordingResources()
-                return
-            }
-            record.startRecording()
-            audioRecord = record
-        } catch (e: Throwable) {
-            e.printStackTrace()
-            Log.e(tag, "AudioRecord start failed", e)
-            previewText?.text = "⚠️ 麥克風啟動失敗：${e.message ?: "未知錯誤"}"
-            previewText?.setTextColor(Color.parseColor("#FF9500"))
-            cleanupRecordingResources()
-            return
-        }
-
-        triggerHaptic(40)
-
-        isRecording = true
-        recordingStartMs = SystemClock.elapsedRealtime()
-        timerText?.text = "⏱ 00:00"
-        recordButton?.text = "🔴 正在聆聽...（點擊完成）"
-        recordButton?.setBackgroundResource(R.drawable.record_btn_recording_bg)
-        swipeHintText?.visibility = View.VISIBLE
-        previewText?.text = "🎙️ 「正在即時辨識說話內容...」"
-        previewText?.setTextColor(Color.parseColor("#00E5FF"))
-
-        // 樂觀串流草稿排版提示
-        currentInputConnection?.setComposingText("📝 [語音輸入辨識中...]", 1)
-
-        startTimer()
-
-        thread {
-            try {
-                val audioData = ShortArray(bufferSize)
-                FileOutputStream(audioFile).use { fos ->
-                    fos.write(ByteArray(44))
-                    var totalBytesWritten = 0
-
-                    while (isRecording) {
-                        val record = audioRecord ?: break
-                        val readSize = try {
-                            record.read(audioData, 0, audioData.size)
-                        } catch (e: Throwable) {
-                            0
-                        }
-                        if (readSize > 0) {
-                            var sum = 0.0
-                            for (i in 0 until readSize) {
-                                val sample = audioData[i]
-                                fos.write(sample.toInt() and 0xFF)
-                                fos.write((sample.toInt() shr 8) and 0xFF)
-                                totalBytesWritten += 2
-                                val normalized = sample.toDouble() / 32768.0
-                                sum += normalized * normalized
-                            }
-                            val rms = sqrt(sum / readSize.toDouble()).toFloat()
-                            mainHandler.post {
-                                waveformView?.updateAmplitude(rms * 4.0f)
-                            }
-                        }
-                    }
-                    writeWavHeader(audioFile, totalBytesWritten)
-                }
-            } catch (e: Throwable) {
-                Log.e(tag, "Audio recording thread exception", e)
-            }
-        }
-    }
-
-    private fun cleanupRecordingResources() {
-        timerRunnable?.let { mainHandler.removeCallbacks(it) }
-        waveformView?.reset()
-
-        try {
-            if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                audioRecord?.stop()
-            }
-            audioRecord?.release()
-        } catch (_: Throwable) {
-        } finally {
-            audioRecord = null
-        }
-
-        isRecording = false
-        currentInputConnection?.setComposingText("", 0)
-        currentInputConnection?.finishComposingText()
-        setIdleState()
     }
 
     private fun startTimer() {
@@ -512,23 +488,16 @@ class EchoWriteIME : InputMethodService() {
 
         triggerHaptic(60)
 
-        try {
-            if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                audioRecord?.stop()
-            }
-            audioRecord?.release()
-        } catch (_: Throwable) {
-        } finally {
-            audioRecord = null
+        mainHandler.post {
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
         }
 
         // 樂觀排版：立即清除輸入框內的暫存 Composing 草稿
         currentInputConnection?.setComposingText("", 0)
         currentInputConnection?.finishComposingText()
-
-        mainHandler.postDelayed({
-            tempAudioFile?.let { if (it.exists()) it.delete() }
-        }, 150)
+        lastPartialText = ""
 
         previewText?.text = "❌ 已取消本次錄音"
         previewText?.setTextColor(Color.parseColor("#9AA7BD"))
@@ -540,49 +509,72 @@ class EchoWriteIME : InputMethodService() {
         timerRunnable?.let { mainHandler.removeCallbacks(it) }
         waveformView?.reset()
 
-        recordButton?.text = "⚡ LLM 語意重塑中..."
-        recordButton?.setBackgroundResource(R.drawable.record_btn_processing_bg)
-        recordButton?.isEnabled = false
-        swipeHintText?.visibility = View.INVISIBLE
-        previewText?.text = "⚙️ 正在套用【${currentStyle.title}】潤飾繁體中文..."
-
-        try {
-            if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                audioRecord?.stop()
-            }
-            audioRecord?.release()
-        } catch (_: Throwable) {
-        } finally {
-            audioRecord = null
+        mainHandler.post {
+            speechRecognizer?.stopListening()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
         }
 
-        val contextBefore = lastRecordedContextBefore
+        val rawText = lastPartialText.trim()
+        lastPartialText = ""
 
-        thread {
-            try {
-                val audioPath = tempAudioFile?.absolutePath ?: return@thread
-                val resultText = EchoWriteCore.processAudioFileWithContext(audioPath, currentStyle.id, contextBefore)
+        // 清除草稿
+        currentInputConnection?.setComposingText("", 0)
+        currentInputConnection?.finishComposingText()
+
+        if (rawText.isEmpty()) {
+            previewText?.text = "⚠️ 未偵測到語音，請靠近麥克風再試"
+            previewText?.setTextColor(Color.parseColor("#FF9500"))
+            setIdleState()
+            return
+        }
+
+        val isCasual = currentStyle == EchoWriteStyle.CASUAL
+        val contextBefore = lastRecordedContextBefore
+        val styleStr = currentStyle.id
+
+        if (isCasual) {
+            // ⚡ 極速通道：純規則引擎，< 10ms，不呼叫 LLM
+            val formatted = EchoWriteCore.formatOnly(rawText)
+            currentInputConnection?.commitText(formatted, 1)
+            previewText?.text = "✅ 已打入：${formatted.take(28)}"
+            previewText?.setTextColor(Color.parseColor("#4CD964"))
+            triggerHaptic(30)
+            setIdleState()
+        } else {
+            // 🌊 非 casual：先立刻插入原始格式化文字，再非同步 LLM 精修替換
+            val quickFormatted = EchoWriteCore.formatOnly(rawText)
+            currentInputConnection?.commitText(quickFormatted, 1)
+            
+            previewText?.text = "⚙️ 精修中（${currentStyle.title}）..."
+            previewText?.setTextColor(Color.parseColor("#C4B5FD"))
+            recordButton?.isEnabled = false
+            recordButton?.text = "⚙️ LLM 語意精修中..."
+            recordButton?.setBackgroundResource(R.drawable.record_btn_processing_bg)
+            swipeHintText?.visibility = View.INVISIBLE
+
+            val insertedLen = quickFormatted.length
+
+            thread {
+                var resultText = ""
+                try {
+                    resultText = EchoWriteCore.polishRawTextWithContext(rawText, styleStr, contextBefore)
+                } catch (e: Exception) {
+                    Log.e(tag, "polishRawText error", e)
+                }
 
                 mainHandler.post {
                     val ic = currentInputConnection
-                    if (ic != null && resultText.isNotEmpty()) {
+                    if (ic != null && resultText.isNotEmpty() && resultText != quickFormatted) {
                         triggerHaptic(30)
-                        // 樂觀排版原子替換：commitText 會替換 setComposingText 的草稿！
+                        ic.deleteSurroundingText(insertedLen, 0)
                         ic.commitText(resultText, 1)
-                        previewText?.text = "✅ 已完成：${resultText.take(24)}..."
+                        previewText?.text = "✅ 已精修打入：${resultText.take(24)}..."
                         previewText?.setTextColor(Color.parseColor("#4CD964"))
                     } else {
-                        ic?.finishComposingText()
-                        previewText?.text = "💬 錄音無內容或音量過小"
+                        previewText?.text = "✅ 已打入（快速模式）：${quickFormatted.take(20)}..."
+                        previewText?.setTextColor(Color.parseColor("#4CD964"))
                     }
-                    setIdleState()
-                    recordButton?.isEnabled = true
-                }
-            } catch (e: Exception) {
-                mainHandler.post {
-                    currentInputConnection?.finishComposingText()
-                    recordButton?.text = "❌ 處理失敗，請重試"
-                    previewText?.text = "⚠️ 本地運算錯誤：${e.message}"
                     setIdleState()
                     recordButton?.isEnabled = true
                 }
@@ -596,38 +588,5 @@ class EchoWriteIME : InputMethodService() {
         recordButton?.isEnabled = true
         swipeHintText?.visibility = View.GONE
         timerText?.text = "⏱ 00:00"
-    }
-
-    private fun writeWavHeader(file: File, totalAudioLen: Int) {
-        val totalDataLen = totalAudioLen + 36
-        val sampleRate = 16000
-        val channels = 1
-        val byteRate = sampleRate * channels * 16 / 8
-
-        val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
-        header.put("RIFF".toByteArray(Charsets.US_ASCII))
-        header.putInt(totalDataLen)
-        header.put("WAVE".toByteArray(Charsets.US_ASCII))
-        header.put("fmt ".toByteArray(Charsets.US_ASCII))
-        header.putInt(16)
-        header.putShort(1)
-        header.putShort(channels.toShort())
-        header.putInt(sampleRate)
-        header.putInt(byteRate)
-        header.putShort((channels * 16 / 8).toShort())
-        header.putShort(16)
-        header.put("data".toByteArray(Charsets.US_ASCII))
-        header.putInt(totalAudioLen)
-
-        RandomAccessFileHelper.overwrite(file, header.array())
-    }
-}
-
-private object RandomAccessFileHelper {
-    fun overwrite(file: File, bytes: ByteArray) {
-        java.io.RandomAccessFile(file, "rw").use { raf ->
-            raf.seek(0)
-            raf.write(bytes)
-        }
     }
 }

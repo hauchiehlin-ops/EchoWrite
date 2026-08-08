@@ -77,6 +77,8 @@ object EchoWriteCore {
     @JvmStatic external fun getModelDownloadProgress(kind: Int): String
     @JvmStatic external fun processAudioFile(audioPath: String, style: String): String
     @JvmStatic external fun processAudioFileWithContext(audioPath: String, style: String, contextBefore: String): String
+    @JvmStatic external fun polishRawText(rawText: String, style: String): String
+    @JvmStatic external fun polishRawTextWithContext(rawText: String, style: String, contextBefore: String): String
     @JvmStatic external fun formatOnly(text: String): String
     @JvmStatic external fun addCustomVocabulary(phrase: String): Boolean
     @JvmStatic external fun deleteCustomVocabulary(phrase: String): Boolean

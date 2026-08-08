@@ -3,7 +3,8 @@
 use crate::models::{ModelKind, ModelProfile};
 use crate::{
     add_custom_vocabulary, format_only, get_custom_vocabulary, get_model_download_progress, initialize, is_model_ready,
-    process_audio_file_with_context, start_model_download, set_model_profile, get_model_profile,
+    process_audio_file_with_context, polish_raw_text, polish_raw_text_with_context,
+    start_model_download, set_model_profile, get_model_profile,
     add_personal_tone_sample, get_personal_tone_samples, clear_personal_tone_samples,
     export_sync_data, import_sync_data, set_model_dir,
 };
@@ -181,6 +182,65 @@ pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_formatOnly(
     };
 
     let result = format_only(text);
+    match env.new_string(result) {
+        Ok(output) => output.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// 平台原生 ASR 完成後，僅執行 LLM 語意重塑 + 格式化（跳過 Whisper）。
+/// casual 模式永遠不呼叫 LLM，< 10ms 瞬間回傳。
+#[no_mangle]
+pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_polishRawText(
+    mut env: JNIEnv,
+    _: JObject,
+    raw_text: JString,
+    style: JString,
+) -> jstring {
+    let raw_text = match get_java_string(&mut env, raw_text) {
+        Ok(v) => v,
+        Err(_) => return ptr::null_mut(),
+    };
+    let style = match get_java_string(&mut env, style) {
+        Ok(v) => v,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let result = match polish_raw_text(raw_text, style) {
+        Ok(text) => text,
+        Err(_) => String::new(),
+    };
+
+    match env.new_string(result) {
+        Ok(output) => output.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// 帶前文脈絡的 polish_raw_text。
+#[no_mangle]
+pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_polishRawTextWithContext(
+    mut env: JNIEnv,
+    _: JObject,
+    raw_text: JString,
+    style: JString,
+    context_before: JString,
+) -> jstring {
+    let raw_text = match get_java_string(&mut env, raw_text) {
+        Ok(v) => v,
+        Err(_) => return ptr::null_mut(),
+    };
+    let style = match get_java_string(&mut env, style) {
+        Ok(v) => v,
+        Err(_) => return ptr::null_mut(),
+    };
+    let context_before = get_optional_java_string(&mut env, context_before);
+
+    let result = match polish_raw_text_with_context(raw_text, style, context_before) {
+        Ok(text) => text,
+        Err(_) => String::new(),
+    };
+
     match env.new_string(result) {
         Ok(output) => output.into_raw(),
         Err(_) => ptr::null_mut(),

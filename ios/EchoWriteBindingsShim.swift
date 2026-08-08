@@ -27,6 +27,14 @@ func ewProcessAudioFileWithContext(audioPath: String, style: String, contextBefo
     try processAudioFileWithContext(audioPath: audioPath, style: style, contextBefore: contextBefore)
 }
 
+func ewPolishRawText(rawText: String, style: String) throws -> String {
+    try polishRawText(rawText: rawText, style: style)
+}
+
+func ewPolishRawTextWithContext(rawText: String, style: String, contextBefore: String?) throws -> String {
+    try polishRawTextWithContext(rawText: rawText, style: style, contextBefore: contextBefore)
+}
+
 func ewIsModelReady(kind: ModelKind) -> Bool {
     isModelReady(kind: kind)
 }

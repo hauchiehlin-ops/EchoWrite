@@ -260,7 +260,50 @@ fn process_audio_file_internal(
         return Ok(String::new());
     }
 
-    // 2.5 語音快速編輯指令判斷 (Voice Command Editing Fast-Path)
+    polish_text_internal(raw_text, style, llm_model, context_before)
+}
+
+/// 直接對已辨識文字進行語意重塑（跳過 Whisper ASR）。
+/// 供平台原生 ASR（iOS SFSpeechRecognizer / Android SpeechRecognizer）使用。
+/// casual 風格不呼叫 LLM，純規則引擎 < 10ms 瞬間回傳。
+#[uniffi::export]
+pub fn polish_raw_text(raw_text: String, style: String) -> Result<String, EchoWriteError> {
+    polish_raw_text_with_context(raw_text, style, None)
+}
+
+/// 帶前文脈絡的語意重塑（跳過 Whisper ASR）
+#[uniffi::export]
+pub fn polish_raw_text_with_context(
+    raw_text: String,
+    style: String,
+    context_before: Option<String>,
+) -> Result<String, EchoWriteError> {
+    if raw_text.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    // 語音快速編輯指令判斷
+    if let Some(cmd_text) = formatter::handle_voice_editing_command(&raw_text) {
+        return Ok(cmd_text);
+    }
+
+    let llm_model = {
+        let state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
+        resolve_model_path(state.llm_model_path.clone(), models::ModelKind::Llm)?
+    };
+
+    polish_text_internal(raw_text, style, llm_model, context_before)
+}
+
+/// 共用內部文字潤飾邏輯（LLM + formatter）。
+/// casual 風格永遠走規則引擎快速通道，不呼叫 LLM。
+fn polish_text_internal(
+    raw_text: String,
+    style: String,
+    llm_model: String,
+    context_before: Option<String>,
+) -> Result<String, EchoWriteError> {
+    // 語音快速編輯指令判斷 (Voice Command Editing Fast-Path)
     if let Some(cmd_text) = formatter::handle_voice_editing_command(&raw_text) {
         return Ok(cmd_text);
     }
@@ -268,30 +311,29 @@ fn process_audio_file_internal(
     let tone_samples = database::get_personal_tone_samples().unwrap_or_default();
     let is_casual = style.is_empty() || style == "casual" || style == "smart";
     let has_no_context = context_before.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true);
-    let is_short_phrase = raw_text.chars().count() <= 14;
 
-    // 2.8 智能極速通道 (Smart Ultra-Fast Path < 1ms)
-    // 針對簡短日常口述（如「好的收到」、「明天下午三點開會」），規則引擎即可達成 100% 同音字校正、在地標點與中英空格，實現零延遲瞬間反饋！
-    let polished_text = if is_casual && has_no_context && tone_samples.is_empty() && is_short_phrase {
+    // 智能極速通道：casual 模式永遠跳過 LLM，純規則引擎處理
+    let polished_text = if is_casual && tone_samples.is_empty() {
         raw_text
     } else {
-        // 3. 呼叫本地常駐 SLM 進行句式潤飾與重組 (結合 Context 與個人風格範例，常駐 RAM/顯存 0ms 重載)
+        // 非 casual 或有個人風格範例時，呼叫 LLM 進行深度重塑
+        let _ = has_no_context; // 保留變數供未來使用
         match llm::polish_text_with_context(raw_text.clone(), style, &llm_model, context_before, &tone_samples) {
             Ok(text) => text,
             Err(e) => {
-                // LLM 發生任何異常時平滑降級為原始文字排版，絕不阻塞使用者輸入
                 eprintln!("[EchoWrite Core] LLM 處理警告，平滑降級為規則排版: {}", e);
                 raw_text
             }
         }
     };
 
-    // 4. 套用台灣繁體中文排版規範
+    // 套用台灣繁體中文排版規範
     let formatted_text = formatter::format_text(polished_text);
 
-    // 5. 存入本地歷史紀錄
+    // 存入本地歷史紀錄
     database::save_history(&formatted_text)
         .map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
 
     Ok(formatted_text)
 }
+
