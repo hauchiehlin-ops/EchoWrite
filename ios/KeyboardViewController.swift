@@ -375,11 +375,19 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
 
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetooth])
+            // Keyboard extension 必須使用 .record 而非 .playAndRecord，
+            // 且不能帶 .defaultToSpeaker（鍵盤 extension 無揚聲器播放需求，帶上會被 iOS 靜默拒絕）。
+            // .allowBluetooth 確保藍牙麥克風可用。
+            // .mixWithOthers 讓主 App（如 LINE）的音訊 session 不被打斷。
+            try audioSession.setCategory(
+                .record,
+                mode: .measurement,
+                options: [.allowBluetooth, .mixWithOthers]
+            )
             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
-            print("[Keyboard] AVAudioSession error: \(error)")
-            previewTextLabel.text = "⚠️ 請在 iOS 設定 > 鍵盤中開啟「允許完整取用」以啟用麥克風！"
+            print("[Keyboard] AVAudioSession setCategory error: \(error)")
+            previewTextLabel.text = "⚠️ 麥克風無法啟用：請至 iOS 設定 › EchoWrite › 允許完整取用，確認已開啟。"
             previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             return
@@ -388,20 +396,31 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
         let audioURL = getTemporaryAudioURL()
         try? FileManager.default.removeItem(at: audioURL)
 
+        // 明確使用 16kHz / 16-bit mono PCM，與 Whisper 輸入格式完全匹配
         let recordSettings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: 16000.0,
             AVNumberOfChannelsKey: 1,
             AVLinearPCMBitDepthKey: 16,
             AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsFloatKey: false
+            AVLinearPCMIsFloatKey: false,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
 
         do {
             audioRecorder = try AVAudioRecorder(url: audioURL, settings: recordSettings)
             audioRecorder?.delegate = self
             audioRecorder?.isMeteringEnabled = true
-            audioRecorder?.record()
+
+            // 明確檢查 record() 是否成功啟動（返回 false 表示系統拒絕，需要診斷）
+            let recordStarted = audioRecorder?.record() ?? false
+            guard recordStarted else {
+                previewTextLabel.text = "⚠️ 錄音未能啟動，請確認：\n1. iOS 設定 › EchoWrite › 允許完整取用已開啟\n2. 隱私設定 › 麥克風已允許 EchoWrite"
+                previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
+                audioRecorder = nil
+                try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+                return
+            }
 
             isRecording = true
             recordingStartTime = Date()
@@ -431,12 +450,14 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
                 }
             }
         } catch {
-            print("[Keyboard] Failed to start recorder: \(error)")
-            previewTextLabel.text = "⚠️ 錄音啟動失敗，請確認已授權鍵盤取用權限"
+            print("[Keyboard] AVAudioRecorder init error: \(error)")
+            previewTextLabel.text = "⚠️ 錄音器建立失敗：\(error.localizedDescription)"
             previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
             isRecording = false
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         }
     }
+
 
     private func stopAndProcessInPlaceRecording() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -450,23 +471,35 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
         isProcessing = true
 
         let audioURL = recorder.url
+        audioRecorder = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 
         // 提取游標前文情境 Context 與風格
         let contextBefore = textDocumentProxy.documentContextBeforeInput
         let styleStr = currentStyle.rawValue
 
-        recordButton.setTitle("⚡ 本地雙引擎語意重塑中...", for: .normal)
+        // 確認錄音檔案確實存在且有內容（> 44 bytes WAV header）
+        let audioFileSize = (try? FileManager.default.attributesOfItem(atPath: audioURL.path))?[.size] as? Int ?? 0
+        guard audioFileSize > 100 else {
+            previewTextLabel.text = "⚠️ 未錄到有效聲音（檔案過小）\n請確認 iOS 設定 › EchoWrite 已開啟「允許完整取用」"
+            previewTextLabel.textColor = UIColor(red: 1.0, green: 0.65, blue: 0.2, alpha: 1.0)
+            isProcessing = false
+            resetButtonUI()
+            return
+        }
+
+        recordButton.setTitle("⚡ 本地 AI 語意重塑中...", for: .normal)
         recordButton.backgroundColor = UIColor(red: 0.4, green: 0.2, blue: 0.8, alpha: 1.0)
         recordButton.isEnabled = false
-        previewTextLabel.text = "⚡ 正在執行毫秒級 ASR 與繁中語意重塑..."
+        previewTextLabel.text = "⚙️ 正在執行本地端語音辨識..."
         previewTextLabel.textColor = UIColor(red: 0.0, green: 0.9, blue: 1.0, alpha: 1.0)
 
-        // 在後台執行推論處理（因已常駐快取 + 極速通道，平均僅耗時 50ms ~ 250ms）
+        // 在後台執行推論處理
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
             var formattedResult: String? = nil
+            var errorMessage: String? = nil
             do {
                 formattedResult = try ewProcessAudioFileWithContext(
                     audioPath: audioURL.path,
@@ -475,6 +508,7 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
                 )
             } catch {
                 print("[Keyboard] In-place process error: \(error)")
+                errorMessage = error.localizedDescription
             }
 
             DispatchQueue.main.async {
@@ -485,17 +519,22 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
                 if let text = formattedResult, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     // 原地瞬間打入文字到使用者的當前輸入框！
                     self.textDocumentProxy.insertText(text)
-                    self.previewTextLabel.text = "✅ 已打入：\(text.prefix(20))..."
+                    self.previewTextLabel.text = "✅ 已打入：\(text.prefix(24))..."
                     self.previewTextLabel.textColor = UIColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1.0)
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
+                } else if let err = errorMessage {
+                    self.previewTextLabel.text = "❌ 處理失敗：\(err)"
+                    self.previewTextLabel.textColor = UIColor(red: 1.0, green: 0.3, blue: 0.3, alpha: 1.0)
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
                 } else {
-                    self.previewTextLabel.text = "⚠️ 未識別到有效聲音，請再試一次"
+                    self.previewTextLabel.text = "⚠️ 語音內容太短或音量過小，請再試一次"
                     self.previewTextLabel.textColor = UIColor(red: 1.0, green: 0.65, blue: 0.2, alpha: 1.0)
                     UINotificationFeedbackGenerator().notificationOccurred(.warning)
                 }
             }
         }
     }
+
 
     private func cancelRecording() {
         recordingTimer?.invalidate()
