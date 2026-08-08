@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Threading.Tasks;
+using Windows.Media.SpeechRecognition;
 
 namespace EchoWrite
 {
@@ -40,6 +41,11 @@ namespace EchoWrite
         [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
         private static extern IntPtr echowrite_format_only(
             [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
+        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr echowrite_polish_raw_text(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string rawText,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string style);
 
         [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
         private static extern void echowrite_free_string(IntPtr ptr);
@@ -435,19 +441,22 @@ namespace EchoWrite
             }
         }
 
-        public static void ToggleRecording()
+        private static SpeechRecognizer? _speechRecognizer;
+        private static string _lastPartialText = "";
+
+        public static async void ToggleRecording()
         {
             if (_isRecording)
             {
-                StopAndInsertText();
+                await StopAndInsertTextAsync();
             }
             else
             {
-                StartRecording();
+                await StartRecordingAsync();
             }
         }
 
-        private static void StartRecording()
+        private static async Task StartRecordingAsync()
         {
             if (_trayIcon == null) return;
 
@@ -459,25 +468,39 @@ namespace EchoWrite
 
             try
             {
-                int result = echowrite_start_recording();
-                if (result != 0)
+                if (_speechRecognizer == null)
                 {
-                    OpenWindowsMicrophoneSettings();
-                    _trayIcon.ShowBalloonTip(3000, "EchoWrite 錄音錯誤", "無法啟動錄音，請確定麥克風裝置已連接，且已在 Windows 「隱私權設定」中核准麥克風權限。", ToolTipIcon.Error);
-                    Console.WriteLine("Windows: Failed to start recording. Error code: " + result);
-                    return;
+                    _speechRecognizer = new SpeechRecognizer();
+                    await _speechRecognizer.CompileConstraintsAsync();
+                    _speechRecognizer.HypothesisGenerated += SpeechRecognizer_HypothesisGenerated;
                 }
+
+                _lastPartialText = "";
+                await _speechRecognizer.ContinuousRecognitionSession.StartAsync();
+                
                 _isRecording = true;
-                _trayIcon.Text = "EchoWrite - 錄音中 (按 Alt + S 停止)...";
-                Console.WriteLine("Windows: Recording started...");
+                _trayIcon.Text = "EchoWrite - 聽寫中: ... (按 Alt + S 停止)";
+                Console.WriteLine("Windows: Native Speech Recognition started...");
             }
             catch (Exception ex)
             {
-                _trayIcon.ShowBalloonTip(3000, "EchoWrite 錯誤", "呼叫錄音核心失敗: " + ex.Message, ToolTipIcon.Error);
+                _trayIcon.ShowBalloonTip(3000, "EchoWrite 錯誤", "無法啟動原生語音辨識: " + ex.Message, ToolTipIcon.Error);
+                Console.WriteLine("Windows: Failed to start recording: " + ex.Message);
             }
         }
 
-        private static void StopAndInsertText()
+        private static void SpeechRecognizer_HypothesisGenerated(SpeechContinuousRecognitionSession sender, SpeechRecognitionHypothesisGeneratedEventArgs args)
+        {
+            _lastPartialText = args.Hypothesis.Text;
+            if (_trayIcon != null)
+            {
+                // 更新托盤提示，模擬動態島的串流顯示
+                string display = _lastPartialText.Length > 20 ? _lastPartialText.Substring(0, 20) + "..." : _lastPartialText;
+                _trayIcon.Text = $"聽寫中: {display}";
+            }
+        }
+
+        private static async Task StopAndInsertTextAsync()
         {
             _isRecording = false;
             if (_trayIcon != null)
@@ -485,34 +508,55 @@ namespace EchoWrite
                 _trayIcon.Text = "EchoWrite - 處理中...";
             }
 
-            Task.Run(() =>
+            try
             {
-                try
+                if (_speechRecognizer != null)
                 {
-                    // 呼叫 Rust FFI 進行本地 AI 轉寫與重組
-                    IntPtr textPtr = echowrite_stop_recording_and_process(_currentStyle);
-                    string? resultText = Marshal.PtrToStringUTF8(textPtr);
+                    await _speechRecognizer.ContinuousRecognitionSession.StopAsync();
+                }
 
-                    if (!string.IsNullOrEmpty(resultText))
-                    {
-                        // 模擬打字插入活動游標
-                        SimulateTyping(resultText);
-                    }
+                string rawText = _lastPartialText.Trim();
+                _lastPartialText = "";
 
-                    echowrite_free_string(textPtr);
-                }
-                catch (Exception ex)
+                if (string.IsNullOrEmpty(rawText))
                 {
-                    Console.WriteLine("Process error: " + ex.Message);
+                    if (_trayIcon != null) _trayIcon.Text = "EchoWrite - 按 Alt + S 開始錄音";
+                    return;
                 }
-                finally
+
+                bool isCasual = _currentStyle == "casual";
+
+                await Task.Run(() =>
                 {
-                    if (_trayIcon != null)
+                    if (isCasual)
                     {
-                        _trayIcon.Text = "EchoWrite - 按 Alt + S 開始錄音";
+                        SimulateTyping(rawText);
                     }
+                    else
+                    {
+                        // 呼叫 Rust FFI 進行本地純文字 AI 重組
+                        IntPtr textPtr = echowrite_polish_raw_text(rawText, _currentStyle);
+                        string? resultText = Marshal.PtrToStringUTF8(textPtr);
+
+                        if (!string.IsNullOrEmpty(resultText))
+                        {
+                            SimulateTyping(resultText);
+                        }
+                        echowrite_free_string(textPtr);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Windows: Process failed: " + ex.Message);
+            }
+            finally
+            {
+                if (_trayIcon != null)
+                {
+                    _trayIcon.Text = "EchoWrite - 按 Alt + S 開始錄音";
                 }
-            });
+            }
         }
 
         private static void SimulateTyping(string text)
