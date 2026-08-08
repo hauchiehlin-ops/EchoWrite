@@ -7,8 +7,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/scripts/build/macos_dmg}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/dist}"
-APP_VERSION="${APP_VERSION:-2.0.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-10}"
+APP_VERSION="${APP_VERSION:-2.3.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-17}"
 DMG_NAME="EchoWrite-${APP_VERSION}.dmg"
 DMG_OUTPUT_PATH="$OUTPUT_DIR/$DMG_NAME"
 INFO_PLIST="$ROOT_DIR/macos/EchoWriteMac-Info.plist"
@@ -19,6 +19,14 @@ MAC_ICNS_PATH="$ROOT_DIR/macos/EchoWriteMac.icns"
 echo "=== EchoWrite macOS DMG 打包流程 ==="
 echo "Version: $APP_VERSION ($BUILD_NUMBER)"
 echo "Output:  $DMG_OUTPUT_PATH"
+
+# 0. 同步更新 Info.plist 版本資訊
+if [[ -f "$INFO_PLIST" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$INFO_PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" "$INFO_PLIST"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFO_PLIST" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$INFO_PLIST"
+fi
 
 # 1. 產生高解析度 ICNS 圖示
 if [[ -f "$MAC_ICON_SOURCE" ]]; then
@@ -52,8 +60,8 @@ fi
 
 # 2. 編譯 Rust 核心庫 (Release)
 echo "--- 正在編譯 Rust 核心 (Release) ---"
-rustup target add aarch64-apple-darwin
-cargo build --release --manifest-path "$ROOT_DIR/core/Cargo.toml" --target aarch64-apple-darwin
+rustup target add aarch64-apple-darwin 2>/dev/null || true
+cargo build --release --manifest-path "$ROOT_DIR/core/Cargo.toml" --target aarch64-apple-darwin 2>/dev/null || true
 cargo build --release --manifest-path "$ROOT_DIR/core/Cargo.toml"
 
 # 3. 清理並準備建置目錄
@@ -81,10 +89,17 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
-# 5. 準備 DMG 內容並建立 Applications 捷徑
-echo "--- 正在封裝 DMG 磁碟映像檔 ---"
+# 5. 準備 DMG 內容並執行代碼簽署與屬性清理
+echo "--- 正在封裝與簽署 DMG 應用程式 ---"
 cp -R "$APP_PATH" "$BUILD_DIR/DMG/EchoWrite.app"
 ln -s /Applications "$BUILD_DIR/DMG/Applications"
+
+# 清除 Quarantine 與限制屬性，避免 macOS Gatekeeper 誤判為已損毀
+xattr -cr "$BUILD_DIR/DMG/EchoWrite.app"
+chmod -R 755 "$BUILD_DIR/DMG/EchoWrite.app"
+
+# 執行深度 Ad-Hoc 代碼簽署以通過 macOS 安全執行檢查
+codesign --force --deep --sign - "$BUILD_DIR/DMG/EchoWrite.app"
 
 # 6. 使用 hdiutil 產生壓縮格式的 DMG
 rm -f "$DMG_OUTPUT_PATH"

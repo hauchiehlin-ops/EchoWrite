@@ -41,8 +41,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             print("EchoWrite: Failed to initialize core: \(error)")
         }
 
+        // 5. 顯示啟動通知浮動島（讓使用者安裝或點開後立即獲得視覺反饋）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.dynamicIslandController?.showWelcomeBanner(
+                title: "⚡ EchoWrite 已啟動 (⌘+Shift+E)",
+                subtitle: "圖示已常駐於右上角選單列，隨時可按快捷鍵或點擊錄音"
+            )
+        }
+
         runPermissionOnboardingForInstallOrUpdate()
         ensureModelsReady()
+    }
+
+    /// 使用者於 Finder / 應用程式或 Spotlight 再次點選 EchoWrite 時主動打開控制導引視窗
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        showQuickGuideClicked()
+        return true
     }
 
     /// 檢查 Whisper / LLM 模型是否已存在本地；若缺少任一個則啟動背景下載，
@@ -476,6 +491,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - 桌面端靈動島浮動膠囊 UI (Desktop Dynamic Island Floating Capsule)
 
 enum DynamicIslandState {
+    case welcome(String, String)
     case recording
     case processing
     case completed(String)
@@ -519,7 +535,7 @@ class DynamicIslandController {
     }
 
     private func setupPanel() {
-        let width: CGFloat = 380
+        let width: CGFloat = 390
         let height: CGFloat = 68
         let screenSize = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let x = screenSize.origin.x + (screenSize.width - width) / 2
@@ -529,6 +545,24 @@ class DynamicIslandController {
         let hostingView = NSHostingView(rootView: DynamicIslandView(model: model))
         panel.contentView = hostingView
         self.panel = panel
+    }
+
+    func showWelcomeBanner(title: String, subtitle: String) {
+        timer?.invalidate()
+        model.state = .welcome(title, subtitle)
+
+        if let panel = panel {
+            panel.alphaValue = 0.0
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.3
+                panel.animator().alphaValue = 1.0
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            self?.hide()
+        }
     }
 
     func show(styleName: String, onFinish: @escaping () -> Void, onCancel: @escaping () -> Void) {
@@ -595,6 +629,24 @@ struct DynamicIslandView: View {
     var body: some View {
         HStack(spacing: 12) {
             switch model.state {
+            case .welcome(let title, let subtitle):
+                Image(systemName: "waveform.circle.fill")
+                    .foregroundColor(.cyan)
+                    .font(.system(size: 24))
+                    .padding(.leading, 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
             case .recording:
                 // 錄音中脈衝紅點與聲波動效
                 HStack(spacing: 4) {
@@ -687,7 +739,7 @@ struct DynamicIslandView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .frame(width: 380, height: 60)
+        .frame(width: 390, height: 60)
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: 30)

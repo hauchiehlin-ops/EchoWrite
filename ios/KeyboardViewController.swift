@@ -31,6 +31,7 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
     
     private var audioRecorder: AVAudioRecorder?
     private var recordingTimer: Timer?
+    private var deleteRepeatTimer: Timer?
     private var recordingStartTime: Date?
     private var isRecording: Bool = false
     private var isProcessing: Bool = false
@@ -58,6 +59,8 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        deleteRepeatTimer?.invalidate()
+        deleteRepeatTimer = nil
         if isRecording {
             cancelRecording()
         }
@@ -192,7 +195,7 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
         let periodButton = createPunctuationButton(title: "。")
         let questionButton = createPunctuationButton(title: "？")
         let spaceButton = createKeyButton(title: "空白", width: 64, action: #selector(spaceKeyTapped))
-        let deleteButton = createKeyButton(title: "⌫", width: 42, action: #selector(deleteKeyTapped))
+        let deleteButton = createDeleteKeyButton()
         let returnButton = createKeyButton(title: "換行", width: 52, action: #selector(returnKeyTapped), isAccent: true)
 
         bottomBar.addArrangedSubview(globeButton)
@@ -247,6 +250,25 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
         return btn
     }
 
+    private func createDeleteKeyButton() -> UIButton {
+        let btn = UIButton(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setTitle("⌫", for: .normal)
+        btn.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
+        btn.setTitleColor(UIColor(white: 0.95, alpha: 1.0), for: .normal)
+        btn.backgroundColor = UIColor(white: 0.22, alpha: 0.85)
+        btn.layer.cornerRadius = 8
+        btn.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        btn.addTarget(self, action: #selector(deleteKeyTapped), for: .touchUpInside)
+
+        // 支援長按連續刪除 (Continuous Delete on Long Press)
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleDeleteKeyLongPress(_:)))
+        longPress.minimumPressDuration = 0.28
+        btn.addGestureRecognizer(longPress)
+
+        return btn
+    }
+
     private func createPunctuationButton(title: String) -> UIButton {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
@@ -274,6 +296,26 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
     @objc private func deleteKeyTapped() {
         textDocumentProxy.deleteBackward()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    @objc private func handleDeleteKeyLongPress(_ gesture: UILongPressGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            textDocumentProxy.deleteBackward()
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+            deleteRepeatTimer?.invalidate()
+            deleteRepeatTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+                guard let self = self else { return }
+                self.textDocumentProxy.deleteBackward()
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        case .ended, .cancelled, .failed:
+            deleteRepeatTimer?.invalidate()
+            deleteRepeatTimer = nil
+        default:
+            break
+        }
     }
 
     @objc private func returnKeyTapped() {
