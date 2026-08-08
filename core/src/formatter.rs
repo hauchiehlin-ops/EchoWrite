@@ -93,10 +93,39 @@ lazy_static! {
     static ref RE_SPACES_AFTER_LINE: Regex = Regex::new(r"\n[ \t]+").unwrap();
 }
 
-/// 格式化語句：包含兩岸詞彙轉換、台語校正、科技縮寫標準化、全形標點、中英空格、自動編號換行與分段排版
+/// 格式化語句：包含 Prompt 回聲清理、兩岸詞彙轉換、台語校正、科技縮寫標準化、全形標點、中英空格、自動編號換行與分段排版
 pub fn format_text(mut text: String) -> String {
     if text.trim().is_empty() {
         return String::new();
+    }
+
+    // 0. 清除可能殘留的模型 Prompt 回聲前綴
+    let prompt_prefixes = [
+        "【當前口述內容】:", "【當前口述內容】：", "【當前口述內容】",
+        "當前口述內容:", "當前口述內容：", "當前口述內容",
+        "【待重塑內容】:", "【待重塑內容】：", "【待重塑內容】",
+        "待重塑內容:", "待重塑內容：", "待重塑內容",
+        "【口述內容】:", "【口述內容】：", "【口述內容】",
+        "口述內容:", "口述內容：",
+        "【前文脈絡/上下文】:", "【前文脈絡/上下文】：", "【前文脈絡/上下文】",
+        "【前文脈絡】:", "【前文脈絡】：",
+        "【個人喜好風格範例】:", "【個人喜好風格範例】：",
+        "【重塑結果】:", "【重塑結果】：", "【重組結果】:", "【重組結果】：", "【潤飾結果】:", "【潤飾結果】：",
+        "重塑結果:", "重塑結果：", "重組結果:", "重組結果：", "潤飾結果:", "潤飾結果：",
+        "以下是重塑後的內容:", "以下是重塑後的內容：", "以下是潤飾後的內容:", "以下是潤飾後的內容：",
+        "以下是整理後的內容:", "以下是整理後的內容：",
+    ];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        text = text.trim().to_string();
+        for prefix in &prompt_prefixes {
+            if text.starts_with(prefix) {
+                text = text[prefix.len()..].trim().to_string();
+                changed = true;
+                break;
+            }
+        }
     }
 
     // 1. 進行兩岸詞彙轉換
@@ -279,5 +308,16 @@ mod tests {
         assert_eq!(handle_voice_editing_command("加個問號"), Some("？".to_string()));
         assert_eq!(handle_voice_editing_command("空兩行"), Some("\n\n".to_string()));
         assert_eq!(handle_voice_editing_command("今天天氣很好"), None);
+    }
+
+    #[test]
+    fn test_prompt_prefix_stripping() {
+        let input = "【當前口述內容】: 今天下午三點準時開會".to_string();
+        let output = format_text(input);
+        assert_eq!(output, "今天下午三點準時開會。");
+
+        let input2 = "當前口述內容：確認專案上線日期".to_string();
+        let output2 = format_text(input2);
+        assert_eq!(output2, "確認專案上線日期。");
     }
 }

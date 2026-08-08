@@ -145,7 +145,11 @@ pub fn polish_text_with_context(
         user_content.push('\n');
     }
 
-    user_content.push_str(&format!("【當前口述內容】:\n{}", raw_text));
+    if user_content.is_empty() {
+        user_content = raw_text;
+    } else {
+        user_content.push_str(&format!("【待重塑內容】:\n{}", raw_text));
+    }
 
     let prompt = format!(
         "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
@@ -172,7 +176,7 @@ pub fn polish_text_with_context(
     let eos_token = model.token_eos();
     
     // 動態根據輸入長度計算 Token 生成上限，大幅加速短句推論
-    let raw_char_count = raw_text.chars().count();
+    let raw_char_count = user_content.chars().count();
     let max_tokens: usize = if style == "bilingual" || style == "email" || style == "formal" {
         512.min(raw_char_count * 4 + 64)
     } else {
@@ -202,17 +206,99 @@ pub fn polish_text(raw_text: String, style: String, model_path: &str) -> Result<
     polish_text_with_context(raw_text, style, model_path, None, &[])
 }
 
-fn clean_model_output(text: String) -> String {
-    text.replace("<|im_end|>", "")
+pub fn clean_model_output(text: String) -> String {
+    let mut cleaned = text
+        .replace("<|im_end|>", "")
         .replace("<|im_start|>", "")
+        .replace("<|endoftext|>", "")
         .replace("assistant", "")
         .trim()
-        .to_string()
+        .to_string();
+
+    // 嚴格消除模型可能回聲重複輸出的 Prompt 提示前綴與廢話開頭
+    let prompt_prefixes = [
+        "【當前口述內容】:",
+        "【當前口述內容】：",
+        "【當前口述內容】",
+        "當前口述內容:",
+        "當前口述內容：",
+        "當前口述內容",
+        "【待重塑內容】:",
+        "【待重塑內容】：",
+        "【待重塑內容】",
+        "待重塑內容:",
+        "待重塑內容：",
+        "【口述內容】:",
+        "【口述內容】：",
+        "【口述內容】",
+        "口述內容:",
+        "口述內容：",
+        "【前文脈絡/上下文】:",
+        "【前文脈絡/上下文】：",
+        "【前文脈絡/上下文】",
+        "【前文脈絡】:",
+        "【前文脈絡】：",
+        "【個人喜好風格範例】:",
+        "【個人喜好風格範例】：",
+        "【重塑結果】:",
+        "【重塑結果】：",
+        "【重組結果】:",
+        "【重組結果】：",
+        "【潤飾結果】:",
+        "【潤飾結果】：",
+        "重塑結果:",
+        "重塑結果：",
+        "重組結果:",
+        "重組結果：",
+        "潤飾結果:",
+        "潤飾結果：",
+        "以下是重塑後的內容:",
+        "以下是重塑後的內容：",
+        "以下是潤飾後的內容:",
+        "以下是潤飾後的內容：",
+        "以下是整理後的內容:",
+        "以下是整理後的內容：",
+        "重塑後的文字:",
+        "重塑後的文字：",
+    ];
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        cleaned = cleaned.trim().to_string();
+        for prefix in &prompt_prefixes {
+            if cleaned.starts_with(prefix) {
+                cleaned = cleaned[prefix.len()..].trim().to_string();
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    // 移除前後多餘的引號與 Markdown 程式碼區塊包裹
+    if (cleaned.starts_with('\"') && cleaned.ends_with('\"')) || (cleaned.starts_with('「') && cleaned.ends_with('」')) {
+        if cleaned.chars().count() >= 2 {
+            let mut chars = cleaned.chars();
+            chars.next();
+            chars.next_back();
+            cleaned = chars.as_str().trim().to_string();
+        }
+    }
+
+    cleaned
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_clean_model_output_removes_echo_headers() {
+        assert_eq!(clean_model_output("【當前口述內容】:\n明天早上開會。".to_string()), "明天早上開會。");
+        assert_eq!(clean_model_output("當前口述內容：明天早上開會。".to_string()), "明天早上開會。");
+        assert_eq!(clean_model_output("【重塑結果】：\n一、確認專案時程".to_string()), "一、確認專案時程");
+        assert_eq!(clean_model_output("以下是潤飾後的內容：\n您好，感謝您的來信。".to_string()), "您好，感謝您的來信。");
+    }
 
     #[test]
     fn test_style_prompts_differentiation() {

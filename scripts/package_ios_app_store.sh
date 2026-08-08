@@ -7,6 +7,7 @@ ARCHIVE_DIR="${ARCHIVE_DIR:-/tmp/echowrite-ios-archive}"
 EXPORT_DIR="${EXPORT_DIR:-/tmp/echowrite-ios-export}"
 EXPORT_OPTIONS="${EXPORT_OPTIONS:-/tmp/echowrite-ios-export-options.plist}"
 ARCHIVE_PATH="$ARCHIVE_DIR/EchoWriteApp.xcarchive"
+APP_INFO_PLIST="$IOS_DIR/App/EchoWriteApp-Info.plist"
 KEYBOARD_INFO_PLIST="$IOS_DIR/EchoWriteKeyboard-Info.plist"
 APP_ENTITLEMENTS="$IOS_DIR/App/EchoWriteApp.entitlements"
 KEYBOARD_ENTITLEMENTS="$IOS_DIR/EchoWriteKeyboard.entitlements"
@@ -69,10 +70,12 @@ echo "=== 3/9 Generating iOS Xcode project ==="
 (cd "$IOS_DIR" && xcodegen generate)
 
 echo "=== 4/9 Preparing version/build metadata ==="
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$KEYBOARD_INFO_PLIST" 2>/dev/null || \
-/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" "$KEYBOARD_INFO_PLIST"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$KEYBOARD_INFO_PLIST" 2>/dev/null || \
-/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$KEYBOARD_INFO_PLIST"
+for plist in "$APP_INFO_PLIST" "$KEYBOARD_INFO_PLIST"; do
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$plist" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" "$plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$plist" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$plist"
+done
 
 for entitlements in "$APP_ENTITLEMENTS" "$KEYBOARD_ENTITLEMENTS"; do
   /usr/libexec/PlistBuddy -c "Delete :com.apple.security.application-groups" "$entitlements" 2>/dev/null || true

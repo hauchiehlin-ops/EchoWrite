@@ -1,14 +1,13 @@
 import UIKit
 import AVFoundation
 
-/// EchoWrite iOS 專屬高辨識度 AI 鍵盤
-/// 遵循 120MB 記憶體限制，音訊由主 App 背景處理，具備：
-/// 1. 獨特品牌視覺（頂部 AI 狀態晶片、風格切換膠囊、動態聲波視覺化）。
-/// 2. 即時串流／樂觀排版 (Optimistic Streaming Typing)。
-/// 3. 5 大語意風格一鍵切換。
-/// 4. 滑動取消手勢與防呆觸覺回饋。
+/// EchoWrite iOS 專屬極速無縫 AI 鍵盤
+/// 1. 鍵盤內原地即時錄音與語意重塑，絕不跳轉視窗、絕不要求手動切換複製貼上。
+/// 2. 說完即打入（In-Place Auto Typing），直通 textDocumentProxy.insertText。
+/// 3. 動態聲波音量柱與精確錄音計時器。
+/// 4. 5 大語意風格一鍵切換與常用中文標點符號列。
 @objc(KeyboardViewController)
-class KeyboardViewController: UIInputViewController {
+class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
     // MARK: - UI 元件
     private var headerStackView: UIStackView!
     private var brandBadgeLabel: UILabel!
@@ -26,9 +25,15 @@ class KeyboardViewController: UIInputViewController {
     private var recordButton: UIButton!
     private var statusLabel: UILabel!
     
-    // MARK: - 狀態管理
+    // MARK: - 錄音與狀態管理
     private var currentStyle: EchoWriteStyle = .casual
     private var heightConstraint: NSLayoutConstraint?
+    
+    private var audioRecorder: AVAudioRecorder?
+    private var recordingTimer: Timer?
+    private var recordingStartTime: Date?
+    private var isRecording: Bool = false
+    private var isProcessing: Bool = false
 
     // MARK: - 生命週期
     override func viewDidLoad() {
@@ -44,17 +49,18 @@ class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         if heightConstraint == nil {
-            let h = view.heightAnchor.constraint(equalToConstant: 260)
+            let h = view.heightAnchor.constraint(equalToConstant: 268)
             h.priority = UILayoutPriority(999)
             h.isActive = true
             heightConstraint = h
         }
-        
-        checkForPendingTranscriptionResult()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        if isRecording {
+            cancelRecording()
+        }
     }
 
     // MARK: - UI 佈局建置
@@ -65,7 +71,7 @@ class KeyboardViewController: UIInputViewController {
         rootContainer.translatesAutoresizingMaskIntoConstraints = false
         rootContainer.axis = .vertical
         rootContainer.alignment = .fill
-        rootContainer.spacing = 8
+        rootContainer.spacing = 6
         view.addSubview(rootContainer)
 
         // 1. 頂部狀態列 (Header Bar)
@@ -86,7 +92,7 @@ class KeyboardViewController: UIInputViewController {
         timerLabel.textColor = UIColor(white: 0.7, alpha: 1.0)
 
         hardwareAccelBadge = UILabel()
-        hardwareAccelBadge.text = "● ANE 加速"
+        hardwareAccelBadge.text = "● ANE / Metal 加速"
         hardwareAccelBadge.font = .systemFont(ofSize: 11, weight: .bold)
         hardwareAccelBadge.textColor = UIColor(red: 0.3, green: 0.85, blue: 0.4, alpha: 1.0)
 
@@ -99,7 +105,7 @@ class KeyboardViewController: UIInputViewController {
         styleScrollView = UIScrollView()
         styleScrollView.translatesAutoresizingMaskIntoConstraints = false
         styleScrollView.showsHorizontalScrollIndicator = false
-        styleScrollView.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        styleScrollView.heightAnchor.constraint(equalToConstant: 32).isActive = true
 
         styleStackView = UIStackView()
         styleStackView.translatesAutoresizingMaskIntoConstraints = false
@@ -113,7 +119,7 @@ class KeyboardViewController: UIInputViewController {
             btn.setTitle(style.title, for: .normal)
             btn.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
             btn.layer.cornerRadius = 14
-            btn.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+            btn.contentEdgeInsets = UIEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
             btn.tag = EchoWriteStyle.allCases.firstIndex(of: style) ?? 0
             btn.addTarget(self, action: #selector(styleButtonTapped(_:)), for: .touchUpInside)
             styleButtons[style] = btn
@@ -121,7 +127,7 @@ class KeyboardViewController: UIInputViewController {
         }
         rootContainer.addArrangedSubview(styleScrollView)
 
-        // 3. 樂觀即時轉寫預覽盒 + 聲波波形 (Preview & Waveform)
+        // 3. 即時轉寫預覽盒 + 動態聲波 (Preview & Waveform)
         previewContainer = UIView()
         previewContainer.translatesAutoresizingMaskIntoConstraints = false
         previewContainer.backgroundColor = UIColor(red: 0.08, green: 0.12, blue: 0.20, alpha: 0.8)
@@ -131,7 +137,7 @@ class KeyboardViewController: UIInputViewController {
 
         previewTextLabel = UILabel()
         previewTextLabel.translatesAutoresizingMaskIntoConstraints = false
-        previewTextLabel.text = "💬 點擊下方按鈕開始說話，說話時即時串流打入草稿..."
+        previewTextLabel.text = "💬 點擊下方麥克風直接說話，說完自動潤飾打入..."
         previewTextLabel.font = .systemFont(ofSize: 12, weight: .medium)
         previewTextLabel.textColor = UIColor(white: 0.75, alpha: 1.0)
         previewTextLabel.numberOfLines = 2
@@ -143,16 +149,16 @@ class KeyboardViewController: UIInputViewController {
 
         rootContainer.addArrangedSubview(previewContainer)
 
-        // 4. 錄音核心按鈕與滑動取消引導 (Record & Gesture Action)
+        // 4. 錄音核心按鈕 (In-Place Tap to Record / Stop)
         let actionStack = UIStackView()
         actionStack.translatesAutoresizingMaskIntoConstraints = false
         actionStack.axis = .vertical
         actionStack.alignment = .center
-        actionStack.spacing = 4
+        actionStack.spacing = 3
 
         recordButton = UIButton(type: .system)
         recordButton.translatesAutoresizingMaskIntoConstraints = false
-        recordButton.setTitle("🎙️ 點擊開始 EchoWrite 語音重塑", for: .normal)
+        recordButton.setTitle("🎙️ 點擊開始說話（原地即時重塑）", for: .normal)
         recordButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
         recordButton.setTitleColor(.white, for: .normal)
         recordButton.backgroundColor = UIColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1.0)
@@ -165,58 +171,34 @@ class KeyboardViewController: UIInputViewController {
 
         statusLabel = UILabel()
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.text = "完全離線本地端 AI · 絕不上傳雲端"
+        statusLabel.text = "完全離線本地端 AI · 原地輸入絕不跳出視窗"
         statusLabel.font = .systemFont(ofSize: 10, weight: .medium)
-        statusLabel.textColor = UIColor(white: 0.45, alpha: 1.0)
+        statusLabel.textColor = UIColor(white: 0.5, alpha: 1.0)
 
         actionStack.addArrangedSubview(recordButton)
         actionStack.addArrangedSubview(statusLabel)
         rootContainer.addArrangedSubview(actionStack)
 
-        // 5. 底部快捷操作列 (Globe Switcher / Space / Backspace / Return)
+        // 5. 底部常用標點與快捷控制列 (Punctuation, Globe, Space, Delete, Return)
         let bottomBar = UIStackView()
         bottomBar.translatesAutoresizingMaskIntoConstraints = false
         bottomBar.axis = .horizontal
-        bottomBar.spacing = 6
+        bottomBar.spacing = 5
         bottomBar.distribution = .fill
         bottomBar.alignment = .fill
 
-        let globeButton = UIButton(type: .system)
-        globeButton.translatesAutoresizingMaskIntoConstraints = false
-        globeButton.setTitle("🌐", for: .normal)
-        globeButton.titleLabel?.font = .systemFont(ofSize: 18)
-        globeButton.backgroundColor = UIColor(white: 0.15, alpha: 0.8)
-        globeButton.layer.cornerRadius = 8
-        globeButton.addTarget(self, action: #selector(handleInputModeList(from:with:)), for: .allTouchEvents)
-
-        let spaceButton = UIButton(type: .system)
-        spaceButton.translatesAutoresizingMaskIntoConstraints = false
-        spaceButton.setTitle("空白", for: .normal)
-        spaceButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
-        spaceButton.setTitleColor(UIColor(white: 0.85, alpha: 1.0), for: .normal)
-        spaceButton.backgroundColor = UIColor(white: 0.18, alpha: 0.8)
-        spaceButton.layer.cornerRadius = 8
-        spaceButton.addTarget(self, action: #selector(spaceKeyTapped), for: .touchUpInside)
-
-        let deleteButton = UIButton(type: .system)
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        deleteButton.setTitle("⌫", for: .normal)
-        deleteButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .bold)
-        deleteButton.setTitleColor(UIColor(white: 0.85, alpha: 1.0), for: .normal)
-        deleteButton.backgroundColor = UIColor(white: 0.15, alpha: 0.8)
-        deleteButton.layer.cornerRadius = 8
-        deleteButton.addTarget(self, action: #selector(deleteKeyTapped), for: .touchUpInside)
-
-        let returnButton = UIButton(type: .system)
-        returnButton.translatesAutoresizingMaskIntoConstraints = false
-        returnButton.setTitle("換行", for: .normal)
-        returnButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .bold)
-        returnButton.setTitleColor(.white, for: .normal)
-        returnButton.backgroundColor = UIColor(red: 0.0, green: 0.45, blue: 0.85, alpha: 0.8)
-        returnButton.layer.cornerRadius = 8
-        returnButton.addTarget(self, action: #selector(returnKeyTapped), for: .touchUpInside)
+        let globeButton = createKeyButton(title: "🌐", width: 38, action: #selector(handleInputModeList(from:with:)))
+        let commaButton = createPunctuationButton(title: "，")
+        let periodButton = createPunctuationButton(title: "。")
+        let questionButton = createPunctuationButton(title: "？")
+        let spaceButton = createKeyButton(title: "空白", width: 64, action: #selector(spaceKeyTapped))
+        let deleteButton = createKeyButton(title: "⌫", width: 42, action: #selector(deleteKeyTapped))
+        let returnButton = createKeyButton(title: "換行", width: 52, action: #selector(returnKeyTapped), isAccent: true)
 
         bottomBar.addArrangedSubview(globeButton)
+        bottomBar.addArrangedSubview(commaButton)
+        bottomBar.addArrangedSubview(periodButton)
+        bottomBar.addArrangedSubview(questionButton)
         bottomBar.addArrangedSubview(spaceButton)
         bottomBar.addArrangedSubview(deleteButton)
         bottomBar.addArrangedSubview(returnButton)
@@ -224,8 +206,8 @@ class KeyboardViewController: UIInputViewController {
 
         // Constraints
         NSLayoutConstraint.activate([
-            rootContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            rootContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            rootContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            rootContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
             rootContainer.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
             rootContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -6),
             
@@ -235,28 +217,55 @@ class KeyboardViewController: UIInputViewController {
             styleStackView.bottomAnchor.constraint(equalTo: styleScrollView.bottomAnchor),
             styleStackView.heightAnchor.constraint(equalTo: styleScrollView.heightAnchor),
 
-            previewContainer.heightAnchor.constraint(equalToConstant: 58),
+            previewContainer.heightAnchor.constraint(equalToConstant: 54),
             previewTextLabel.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor, constant: 10),
             previewTextLabel.trailingAnchor.constraint(equalTo: waveformView.leadingAnchor, constant: -8),
-            previewTextLabel.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 6),
-            previewTextLabel.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: -6),
+            previewTextLabel.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 5),
+            previewTextLabel.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: -5),
 
             waveformView.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -10),
             waveformView.centerYAnchor.constraint(equalTo: previewContainer.centerYAnchor),
-            waveformView.widthAnchor.constraint(equalToConstant: 50),
-            waveformView.heightAnchor.constraint(equalToConstant: 28),
+            waveformView.widthAnchor.constraint(equalToConstant: 48),
+            waveformView.heightAnchor.constraint(equalToConstant: 26),
 
-            recordButton.widthAnchor.constraint(equalTo: rootContainer.widthAnchor, multiplier: 0.96),
-            recordButton.heightAnchor.constraint(equalToConstant: 44),
-
-            globeButton.widthAnchor.constraint(equalToConstant: 42),
-            deleteButton.widthAnchor.constraint(equalToConstant: 42),
-            returnButton.widthAnchor.constraint(equalToConstant: 56),
+            recordButton.widthAnchor.constraint(equalTo: rootContainer.widthAnchor, multiplier: 0.98),
+            recordButton.heightAnchor.constraint(equalToConstant: 42),
             bottomBar.heightAnchor.constraint(equalToConstant: 34)
         ])
     }
 
-    // MARK: - 輔助按鍵動作
+    private func createKeyButton(title: String, width: CGFloat, action: Selector, isAccent: Bool = false) -> UIButton {
+        let btn = UIButton(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setTitle(title, for: .normal)
+        btn.titleLabel?.font = .systemFont(ofSize: 13, weight: .bold)
+        btn.setTitleColor(isAccent ? .white : UIColor(white: 0.88, alpha: 1.0), for: .normal)
+        btn.backgroundColor = isAccent ? UIColor(red: 0.0, green: 0.45, blue: 0.85, alpha: 0.85) : UIColor(white: 0.16, alpha: 0.85)
+        btn.layer.cornerRadius = 8
+        btn.widthAnchor.constraint(equalToConstant: width).isActive = true
+        btn.addTarget(self, action: action, for: .touchUpInside)
+        return btn
+    }
+
+    private func createPunctuationButton(title: String) -> UIButton {
+        let btn = UIButton(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setTitle(title, for: .normal)
+        btn.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
+        btn.setTitleColor(UIColor(white: 0.9, alpha: 1.0), for: .normal)
+        btn.backgroundColor = UIColor(white: 0.20, alpha: 0.8)
+        btn.layer.cornerRadius = 8
+        btn.addTarget(self, action: #selector(punctuationKeyTapped(_:)), for: .touchUpInside)
+        return btn
+    }
+
+    // MARK: - 按鍵動作
+    @objc private func punctuationKeyTapped(_ sender: UIButton) {
+        guard let p = sender.title(for: .normal) else { return }
+        textDocumentProxy.insertText(p)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
     @objc private func spaceKeyTapped() {
         textDocumentProxy.insertText(" ")
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -300,80 +309,172 @@ class KeyboardViewController: UIInputViewController {
         }
     }
 
-    // MARK: - 語音重塑喚醒與結果自動打入
+    // MARK: - 原地錄音與即時重塑核心 (In-Place Dictation)
     @objc private func recordButtonTapped() {
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.impactOccurred()
+        if isProcessing { return }
 
-        // 1. 提取游標前文情境 Context 與當前風格
-        let contextBefore = textDocumentProxy.documentContextBeforeInput ?? ""
-        EchoWriteShared.setSharedContextBefore(contextBefore)
-        EchoWriteShared.setSelectedStyle(currentStyle)
-
-        recordButton.setTitle("🎙️ 正在喚醒 EchoWrite 語音重塑...", for: .normal)
-        previewTextLabel.text = "⚡ 正在喚醒本地 AI 雙引擎語音介面..."
-        previewTextLabel.textColor = UIColor(red: 0.0, green: 0.9, blue: 1.0, alpha: 1.0)
-
-        // 2. 透過 URL Scheme 喚醒主 App 進行全功能即時語音錄製與 ANE 神經網路重塑
-        guard let url = URL(string: "echowrite://record?style=\(currentStyle.rawValue)") else { return }
-        openContainingApp(url: url)
+        if isRecording {
+            stopAndProcessInPlaceRecording()
+        } else {
+            startInPlaceRecording()
+        }
     }
 
-    private func openContainingApp(url: URL) {
-        // 方法 1: 使用 Responder Chain 尋找 UIApplication
-        var responder: UIResponder? = self
-        while let r = responder {
-            if let app = r as? UIApplication {
-                app.open(url, options: [:], completionHandler: nil)
-                return
-            }
-            responder = r.next
+    private func getTemporaryAudioURL() -> URL {
+        if let sharedURL = EchoWriteShared.sharedAudioURL {
+            return sharedURL
         }
-
-        // 方法 2: 使用 selector 透過 Responder Chain 呼叫 openURL:
-        let selector = sel_registerName("openURL:")
-        responder = self
-        while let r = responder {
-            if r.responds(to: selector) {
-                r.perform(selector, with: url)
-                return
-            }
-            responder = r.next
-        }
-
-        // 方法 3: 使用 extensionContext?.open
-        self.extensionContext?.open(url, completionHandler: nil)
+        let tempDir = FileManager.default.temporaryDirectory
+        return tempDir.appendingPathComponent("echowrite_input.wav")
     }
 
-    /// 檢查是否有剛在主 App 完成的 AI 重塑結果，若有則自動貼入
-    private func checkForPendingTranscriptionResult() {
-        guard let resultURL = EchoWriteShared.sharedResultURL,
-              FileManager.default.fileExists(atPath: resultURL.path),
-              let text = try? String(contentsOf: resultURL, encoding: .utf8),
-              !text.isEmpty else {
-            resetButton()
+    private func startInPlaceRecording() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetooth])
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            print("[Keyboard] AVAudioSession error: \(error)")
+            previewTextLabel.text = "⚠️ 請在 iOS 設定 > 鍵盤中開啟「允許完整取用」以啟用麥克風！"
+            previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
             return
         }
 
-        // 自動打入最新重塑文字！
-        textDocumentProxy.insertText(text)
-        try? FileManager.default.removeItem(at: resultURL)
+        let audioURL = getTemporaryAudioURL()
+        try? FileManager.default.removeItem(at: audioURL)
 
-        previewTextLabel.text = "✅ 已自動填入：\(text.prefix(25))..."
-        previewTextLabel.textColor = UIColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1.0)
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.success)
+        let recordSettings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false
+        ]
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            self?.resetButton()
+        do {
+            audioRecorder = try AVAudioRecorder(url: audioURL, settings: recordSettings)
+            audioRecorder?.delegate = self
+            audioRecorder?.isMeteringEnabled = true
+            audioRecorder?.record()
+
+            isRecording = true
+            recordingStartTime = Date()
+
+            // 更新 UI 為錄音中狀態
+            recordButton.setTitle("⏹️ 錄音中... 點擊完成並輸入", for: .normal)
+            recordButton.backgroundColor = UIColor(red: 0.85, green: 0.2, blue: 0.25, alpha: 1.0)
+            recordButton.layer.shadowColor = UIColor(red: 1.0, green: 0.2, blue: 0.3, alpha: 0.8).cgColor
+            previewTextLabel.text = "🎙️ 正在聆聽您的口述內容，請自然說話..."
+            previewTextLabel.textColor = UIColor(red: 0.0, green: 0.95, blue: 1.0, alpha: 1.0)
+            statusLabel.text = "點擊按鈕即可立即重塑文字並自動打入"
+
+            // 啟動計時器與動態波形取樣
+            recordingTimer?.invalidate()
+            recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.06, repeats: true) { [weak self] _ in
+                guard let self = self, let recorder = self.audioRecorder, recorder.isRecording else { return }
+                recorder.updateMeters()
+                let power = recorder.averagePower(forChannel: 0)
+                let level = max(0.08, min(1.0, CGFloat((power + 45.0) / 45.0)))
+                self.waveformView.updateAmplitude(level)
+
+                if let start = self.recordingStartTime {
+                    let elapsed = Int(Date().timeIntervalSince(start))
+                    let min = elapsed / 60
+                    let sec = elapsed % 60
+                    self.timerLabel.text = String(format: "⏱ %02d:%02d", min, sec)
+                }
+            }
+        } catch {
+            print("[Keyboard] Failed to start recorder: \(error)")
+            previewTextLabel.text = "⚠️ 錄音啟動失敗，請確認已授權鍵盤取用權限"
+            previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
+            isRecording = false
         }
     }
 
-    private func resetButton() {
-        recordButton.setTitle("🎙️ 點擊開始 EchoWrite 語音重塑", for: .normal)
+    private func stopAndProcessInPlaceRecording() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        
+        guard let recorder = audioRecorder, isRecording else { return }
+        recorder.stop()
+        isRecording = false
+        isProcessing = true
+
+        let audioURL = recorder.url
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+
+        // 提取游標前文情境 Context 與風格
+        let contextBefore = textDocumentProxy.documentContextBeforeInput
+        let styleStr = currentStyle.rawValue
+
+        recordButton.setTitle("⚡ 本地雙引擎語意重塑中...", for: .normal)
+        recordButton.backgroundColor = UIColor(red: 0.4, green: 0.2, blue: 0.8, alpha: 1.0)
+        recordButton.isEnabled = false
+        previewTextLabel.text = "⚡ 正在執行毫秒級 ASR 與繁中語意重塑..."
+        previewTextLabel.textColor = UIColor(red: 0.0, green: 0.9, blue: 1.0, alpha: 1.0)
+
+        // 在後台執行推論處理（因已常駐快取 + 極速通道，平均僅耗時 50ms ~ 250ms）
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            var formattedResult: String? = nil
+            do {
+                formattedResult = try ewProcessAudioFileWithContext(
+                    audioPath: audioURL.path,
+                    style: styleStr,
+                    contextBefore: contextBefore
+                )
+            } catch {
+                print("[Keyboard] In-place process error: \(error)")
+            }
+
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                self.waveformView.reset()
+                self.resetButtonUI()
+
+                if let text = formattedResult, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // 原地瞬間打入文字到使用者的當前輸入框！
+                    self.textDocumentProxy.insertText(text)
+                    self.previewTextLabel.text = "✅ 已打入：\(text.prefix(20))..."
+                    self.previewTextLabel.textColor = UIColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1.0)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                } else {
+                    self.previewTextLabel.text = "⚠️ 未識別到有效聲音，請再試一次"
+                    self.previewTextLabel.textColor = UIColor(red: 1.0, green: 0.65, blue: 0.2, alpha: 1.0)
+                    UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                }
+            }
+        }
+    }
+
+    private func cancelRecording() {
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        audioRecorder?.stop()
+        audioRecorder = nil
+        isRecording = false
+        isProcessing = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        waveformView.reset()
+        resetButtonUI()
+        previewTextLabel.text = "已取消錄音"
+    }
+
+    private func resetButtonUI() {
+        recordButton.setTitle("🎙️ 點擊開始說話（原地即時重塑）", for: .normal)
         recordButton.backgroundColor = UIColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1.0)
+        recordButton.layer.shadowColor = UIColor(red: 0.0, green: 0.6, blue: 1.0, alpha: 0.5).cgColor
         recordButton.isEnabled = true
         timerLabel.text = "⏱ 00:00"
+        statusLabel.text = "完全離線本地端 AI · 原地輸入絕不跳出視窗"
     }
 }
 
@@ -393,7 +494,7 @@ final class AudioWaveformView: UIView {
     }
 
     private func setupBars() {
-        for i in 0..<barCount {
+        for _ in 0..<barCount {
             let layer = CALayer()
             layer.backgroundColor = UIColor(red: 0.0, green: 0.85, blue: 1.0, alpha: 0.8).cgColor
             layer.cornerRadius = 2
@@ -423,7 +524,7 @@ final class AudioWaveformView: UIView {
 
         for (i, layer) in barLayers.enumerated() {
             let factor = sin(CGFloat(i) / CGFloat(barCount) * .pi)
-            let dynamicHeight = max(4, height * level * factor * CGFloat.random(in: 0.7...1.2))
+            let dynamicHeight = max(4, height * level * factor * CGFloat.random(in: 0.8...1.2))
             let x = CGFloat(i) * (barWidth + spacing)
             layer.frame = CGRect(x: x, y: (height - dynamicHeight) / 2, width: barWidth, height: dynamicHeight)
         }
