@@ -9,6 +9,7 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -52,7 +53,11 @@ class EchoWriteIME : InputMethodService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var progressPoller: Runnable? = null
     private var timerRunnable: Runnable? = null
-    private var recordingSeconds = 0
+    private var recordingStartMs: Long = 0L
+
+    // 底部輔助列按鍵
+    private var deleteRepeatRunnable: Runnable? = null
+    private var isDeleteRepeating = false
 
     // 滑動取消手勢
     private var swipeStartX = 0f
@@ -86,6 +91,7 @@ class EchoWriteIME : InputMethodService() {
         recordButton?.setOnClickListener {
             toggleRecording()
         }
+        bindBottomBar(keyboardView)
         setupSwipeToCancel()
 
         return keyboardView
@@ -122,6 +128,84 @@ class EchoWriteIME : InputMethodService() {
                 view.setTextColor(Color.parseColor("#9AA7BD"))
             }
         }
+    }
+
+    // MARK: - 底部輔助標點列接線
+    private fun bindBottomBar(root: View) {
+        val punctuations = mapOf(
+            R.id.key_comma     to "，",
+            R.id.key_period    to "。",
+            R.id.key_exclamation to "！",
+            R.id.key_question  to "？",
+            R.id.key_pause     to "、"
+        )
+        for ((id, p) in punctuations) {
+            root.findViewById<Button>(id)?.setOnClickListener {
+                currentInputConnection?.commitText(p, 1)
+                triggerHaptic(18)
+            }
+        }
+
+        // 空白鍵
+        root.findViewById<Button>(R.id.key_space)?.setOnClickListener {
+            currentInputConnection?.commitText(" ", 1)
+            triggerHaptic(18)
+        }
+
+        // 換行鍵
+        root.findViewById<Button>(R.id.key_return)?.setOnClickListener {
+            currentInputConnection?.commitText("\n", 1)
+            triggerHaptic(18)
+        }
+
+        // 隱藏鍵盤鍵
+        root.findViewById<Button>(R.id.key_hide)?.setOnClickListener {
+            requestHideSelf(0)
+            triggerHaptic(25)
+        }
+
+        // 地球儀切換輸入法
+        root.findViewById<Button>(R.id.key_globe)?.setOnClickListener {
+            switchToNextInputMethod(false)
+            triggerHaptic(18)
+        }
+
+        // 刪除鍵：單按刪一字，長按連續刪除
+        val deleteBtn = root.findViewById<Button>(R.id.key_delete)
+        deleteBtn?.setOnClickListener {
+            currentInputConnection?.deleteSurroundingText(1, 0)
+            triggerHaptic(18)
+        }
+        deleteBtn?.setOnLongClickListener {
+            isDeleteRepeating = true
+            startDeleteRepeat()
+            true
+        }
+        deleteBtn?.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) {
+                stopDeleteRepeat()
+            }
+            false
+        }
+    }
+
+    private fun startDeleteRepeat() {
+        stopDeleteRepeat()
+        deleteRepeatRunnable = object : Runnable {
+            override fun run() {
+                if (!isDeleteRepeating) return
+                currentInputConnection?.deleteSurroundingText(1, 0)
+                triggerHaptic(12)
+                mainHandler.postDelayed(this, 65)
+            }
+        }
+        mainHandler.postDelayed(deleteRepeatRunnable!!, 350)
+    }
+
+    private fun stopDeleteRepeat() {
+        isDeleteRepeating = false
+        deleteRepeatRunnable?.let { mainHandler.removeCallbacks(it) }
+        deleteRepeatRunnable = null
     }
 
     private fun setupSwipeToCancel() {
@@ -237,6 +321,15 @@ class EchoWriteIME : InputMethodService() {
         super.onDestroy()
         stopDownloadProgressPolling()
         timerRunnable?.let { mainHandler.removeCallbacks(it) }
+        stopDeleteRepeat()
+    }
+
+    override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        EchoWriteCore.setSavedModelProfile(this, EchoWriteCore.getSavedModelProfile(this))
+        currentStyle = EchoWriteCore.getSelectedStyle(this)
+        updateStyleUI()
+        ensureModelsReady()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -327,7 +420,7 @@ class EchoWriteIME : InputMethodService() {
         triggerHaptic(40)
 
         isRecording = true
-        recordingSeconds = 0
+        recordingStartMs = SystemClock.elapsedRealtime()
         timerText?.text = "⏱ 00:00"
         recordButton?.text = "🔴 正在聆聽...（點擊完成）"
         recordButton?.setBackgroundResource(R.drawable.record_btn_recording_bg)
@@ -402,20 +495,14 @@ class EchoWriteIME : InputMethodService() {
         timerRunnable = object : Runnable {
             override fun run() {
                 if (!isRecording) return
-                recordingSeconds++
-                val mins = recordingSeconds / 60
-                val secs = recordingSeconds % 60
+                val elapsedSecs = ((SystemClock.elapsedRealtime() - recordingStartMs) / 1000L).toInt()
+                val mins = elapsedSecs / 60
+                val secs = elapsedSecs % 60
                 timerText?.text = String.format("⏱ %02d:%02d", mins, secs)
-
-                // 樂觀串流動態打字反饋
-                val sampleDrafts = listOf("正在辨識中...", "AI 語意重塑中...", "即時處理中...")
-                val currentDraft = sampleDrafts[(recordingSeconds / 2) % sampleDrafts.size]
-                previewText?.text = "📝 「$currentDraft」"
-
-                mainHandler.postDelayed(this, 1000)
+                mainHandler.postDelayed(this, 250)
             }
         }
-        mainHandler.postDelayed(timerRunnable!!, 1000)
+        mainHandler.post(timerRunnable!!)
     }
 
     private fun cancelRecording() {
@@ -507,7 +594,7 @@ class EchoWriteIME : InputMethodService() {
         recordButton?.text = "🎙️ 點擊開始 EchoWrite 語音重塑"
         recordButton?.setBackgroundResource(R.drawable.record_btn_bg)
         recordButton?.isEnabled = true
-        swipeHintText?.visibility = View.INVISIBLE
+        swipeHintText?.visibility = View.GONE
         timerText?.text = "⏱ 00:00"
     }
 

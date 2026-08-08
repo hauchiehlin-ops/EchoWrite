@@ -52,13 +52,16 @@ pub fn transcribe(audio_path: String, model_path: &str, custom_vocabulary: &[Str
     let mut state = ctx.create_state()
         .map_err(|e| format!("無法建立推理狀態: {:?}", e))?;
 
-    // 3. 設定 ASR 參數
+    // 3. 設定 ASR 參數與多核心硬體加速
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_language(Some("zh")); // 設定為中文辨識
+    params.set_n_threads(4); // 啟用多核心加速
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
+    params.set_single_segment(true);
+    params.set_no_context(true);
 
     if !custom_vocabulary.is_empty() {
         params.set_initial_prompt(&custom_vocabulary.join("、"));

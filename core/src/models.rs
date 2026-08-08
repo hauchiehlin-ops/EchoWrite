@@ -45,7 +45,7 @@ pub struct ModelProgress {
 
 lazy_static! {
     static ref ACTIVE_PROFILE: Mutex<ModelProfile> = Mutex::new(ModelProfile::Turbo);
-    static ref PROGRESS: Mutex<HashMap<ModelKind, ModelProgress>> = Mutex::new(HashMap::new());
+    static ref PROGRESS: Mutex<HashMap<(ModelKind, ModelProfile), ModelProgress>> = Mutex::new(HashMap::new());
     static ref OVERRIDE_MODEL_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 }
 
@@ -116,8 +116,7 @@ struct ModelSpec {
     coreml_encoder_url: Option<&'static str>,
 }
 
-fn spec_for(kind: ModelKind) -> ModelSpec {
-    let profile = get_model_profile();
+fn spec_for(kind: ModelKind, profile: ModelProfile) -> ModelSpec {
     match (kind, profile) {
         (ModelKind::Whisper, ModelProfile::Turbo) => ModelSpec {
             filename: "ggml-base-q5_1.bin",
@@ -176,19 +175,27 @@ pub fn model_dir() -> PathBuf {
     dir
 }
 
-pub fn model_path(kind: ModelKind) -> PathBuf {
+pub fn model_path_for(kind: ModelKind, profile: ModelProfile) -> PathBuf {
     let mut path = model_dir();
-    path.push(spec_for(kind).filename);
+    path.push(spec_for(kind, profile).filename);
     path
 }
 
+pub fn model_path(kind: ModelKind) -> PathBuf {
+    model_path_for(kind, get_model_profile())
+}
+
+pub fn is_model_ready_for(kind: ModelKind, profile: ModelProfile) -> bool {
+    model_path_for(kind, profile).is_file()
+}
+
 pub fn is_model_ready(kind: ModelKind) -> bool {
-    model_path(kind).is_file()
+    is_model_ready_for(kind, get_model_profile())
 }
 
 /// 若模型檔案已存在於本地，回傳其絕對路徑；否則回傳 None。
-pub fn default_model_path(kind: ModelKind) -> Option<String> {
-    let path = model_path(kind);
+pub fn default_model_path_for(kind: ModelKind, profile: ModelProfile) -> Option<String> {
+    let path = model_path_for(kind, profile);
     if path.is_file() {
         Some(path.to_string_lossy().to_string())
     } else {
@@ -196,46 +203,50 @@ pub fn default_model_path(kind: ModelKind) -> Option<String> {
     }
 }
 
+pub fn default_model_path(kind: ModelKind) -> Option<String> {
+    default_model_path_for(kind, get_model_profile())
+}
 
-
-fn set_progress(kind: ModelKind, progress: ModelProgress) {
+fn set_progress_for(kind: ModelKind, profile: ModelProfile, progress: ModelProgress) {
     if let Ok(mut map) = PROGRESS.lock() {
-        map.insert(kind, progress);
+        map.insert((kind, profile), progress);
     }
 }
 
-fn partial_model_path(kind: ModelKind) -> PathBuf {
-    model_path(kind).with_extension("part")
-}
-
-fn download_meta_path(kind: ModelKind) -> PathBuf {
-    let mut path = partial_model_path(kind);
-    path.set_extension("part.meta");
+fn partial_model_path(kind: ModelKind, profile: ModelProfile) -> PathBuf {
+    let mut path = model_path_for(kind, profile);
+    path.as_mut_os_string().push(".part");
     path
 }
 
-fn read_cached_total_bytes(kind: ModelKind) -> Option<u64> {
-    let text = fs::read_to_string(download_meta_path(kind)).ok()?;
+fn download_meta_path(kind: ModelKind, profile: ModelProfile) -> PathBuf {
+    let mut path = partial_model_path(kind, profile);
+    path.as_mut_os_string().push(".meta");
+    path
+}
+
+fn read_cached_total_bytes(kind: ModelKind, profile: ModelProfile) -> Option<u64> {
+    let text = fs::read_to_string(download_meta_path(kind, profile)).ok()?;
     text.trim().parse::<u64>().ok()
 }
 
-fn write_cached_total_bytes(kind: ModelKind, total_bytes: u64) {
-    let _ = fs::write(download_meta_path(kind), total_bytes.to_string());
+fn write_cached_total_bytes(kind: ModelKind, profile: ModelProfile, total_bytes: u64) {
+    let _ = fs::write(download_meta_path(kind, profile), total_bytes.to_string());
 }
 
-fn clear_download_artifacts(kind: ModelKind) {
-    let _ = fs::remove_file(partial_model_path(kind));
-    let _ = fs::remove_file(download_meta_path(kind));
+fn clear_download_artifacts(kind: ModelKind, profile: ModelProfile) {
+    let _ = fs::remove_file(partial_model_path(kind, profile));
+    let _ = fs::remove_file(download_meta_path(kind, profile));
 }
 
-fn progress_from_disk(kind: ModelKind) -> Option<ModelProgress> {
-    let part_path = partial_model_path(kind);
+fn progress_from_disk(kind: ModelKind, profile: ModelProfile) -> Option<ModelProgress> {
+    let part_path = partial_model_path(kind, profile);
     if !part_path.is_file() {
         return None;
     }
 
     let downloaded_bytes = fs::metadata(&part_path).ok()?.len();
-    let total_bytes = read_cached_total_bytes(kind).unwrap_or(0);
+    let total_bytes = read_cached_total_bytes(kind, profile).unwrap_or(0);
 
     Some(ModelProgress {
         downloaded_bytes,
@@ -245,43 +256,50 @@ fn progress_from_disk(kind: ModelKind) -> Option<ModelProgress> {
     })
 }
 
-pub fn get_progress(kind: ModelKind) -> ModelProgress {
+pub fn get_progress_for(kind: ModelKind, profile: ModelProfile) -> ModelProgress {
+    // 磁碟實際存在完整的模型檔案時，具備最高優先權（已就緒且大小確定）
+    if is_model_ready_for(kind, profile) {
+        let size = fs::metadata(model_path_for(kind, profile)).map(|m| m.len()).unwrap_or(0);
+        return ModelProgress {
+            downloaded_bytes: size,
+            total_bytes: size,
+            state: ModelDownloadState::Ready,
+            error: None,
+        };
+    }
+
+    // 檢查記憶體中即時的下載進度
     if let Ok(map) = PROGRESS.lock() {
-        if let Some(p) = map.get(&kind) {
+        if let Some(p) = map.get(&(kind, profile)) {
             return p.clone();
         }
     }
-    let is_ready = is_model_ready(kind);
-    if !is_ready {
-        if let Some(progress) = progress_from_disk(kind) {
-            return progress;
-        }
+
+    // 檢查暫存斷點續傳檔案
+    if let Some(progress) = progress_from_disk(kind, profile) {
+        return progress;
     }
-    let size = if is_ready {
-        fs::metadata(model_path(kind)).map(|m| m.len()).unwrap_or(0)
-    } else {
-        0
-    };
+
     ModelProgress {
-        downloaded_bytes: size,
-        total_bytes: size,
-        state: if is_ready {
-            ModelDownloadState::Ready
-        } else {
-            ModelDownloadState::NotStarted
-        },
+        downloaded_bytes: 0,
+        total_bytes: 0,
+        state: ModelDownloadState::NotStarted,
         error: None,
     }
 }
 
-/// 啟動背景下載執行緒（若已就緒或已在下載中則直接返回）。
-/// 呼叫端（各平台）應輪詢 `get_progress` 更新 UI。
-pub fn start_download(kind: ModelKind) {
-    if is_model_ready(kind) {
-        let size = fs::metadata(model_path(kind)).map(|m| m.len()).unwrap_or(0);
-        clear_download_artifacts(kind);
-        set_progress(
+pub fn get_progress(kind: ModelKind) -> ModelProgress {
+    get_progress_for(kind, get_model_profile())
+}
+
+/// 啟動指定 Profile 的背景下載執行緒（若已就緒或已在下載中則直接返回）。
+pub fn start_download_for(kind: ModelKind, profile: ModelProfile) {
+    if is_model_ready_for(kind, profile) {
+        let size = fs::metadata(model_path_for(kind, profile)).map(|m| m.len()).unwrap_or(0);
+        clear_download_artifacts(kind, profile);
+        set_progress_for(
             kind,
+            profile,
             ModelProgress {
                 downloaded_bytes: size,
                 total_bytes: size,
@@ -291,14 +309,16 @@ pub fn start_download(kind: ModelKind) {
         );
         return;
     }
-    if matches!(get_progress(kind).state, ModelDownloadState::Downloading) {
+
+    if matches!(get_progress_for(kind, profile).state, ModelDownloadState::Downloading) {
         return;
     }
 
-    let existing_bytes = fs::metadata(partial_model_path(kind)).map(|m| m.len()).unwrap_or(0);
-    let cached_total = read_cached_total_bytes(kind).unwrap_or(0);
-    set_progress(
+    let existing_bytes = fs::metadata(partial_model_path(kind, profile)).map(|m| m.len()).unwrap_or(0);
+    let cached_total = read_cached_total_bytes(kind, profile).unwrap_or(0);
+    set_progress_for(
         kind,
+        profile,
         ModelProgress {
             downloaded_bytes: existing_bytes,
             total_bytes: cached_total,
@@ -308,9 +328,10 @@ pub fn start_download(kind: ModelKind) {
     );
 
     thread::spawn(move || {
-        if let Err(e) = download_blocking(kind) {
-            set_progress(
+        if let Err(e) = download_blocking(kind, profile) {
+            set_progress_for(
                 kind,
+                profile,
                 ModelProgress {
                     downloaded_bytes: 0,
                     total_bytes: 0,
@@ -322,18 +343,25 @@ pub fn start_download(kind: ModelKind) {
     });
 }
 
-fn download_blocking(kind: ModelKind) -> Result<(), String> {
-    let spec = spec_for(kind);
-    let dest = model_path(kind);
+/// 啟動當前啟用 Profile 的背景下載執行緒。
+pub fn start_download(kind: ModelKind) {
+    start_download_for(kind, get_model_profile());
+}
+
+fn download_blocking(kind: ModelKind, profile: ModelProfile) -> Result<(), String> {
+    let spec = spec_for(kind, profile);
+    let dest = model_path_for(kind, profile);
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("建立目錄失敗: {}", e))?;
     }
-    let tmp_dest = partial_model_path(kind);
+    let tmp_dest = partial_model_path(kind, profile);
     let existing_bytes = fs::metadata(&tmp_dest).map(|m| m.len()).unwrap_or(0);
 
     let client = reqwest::blocking::Client::builder()
-        .user_agent("EchoWrite/1.0 (Android; Rust)")
+        .user_agent("EchoWrite/2.3.0 (Client; Rust)")
         .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(1200))
+        .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|e| format!("網路客戶端初始化失敗: {}", e))?;
 
@@ -367,7 +395,7 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
         total = total.saturating_add(existing_bytes);
     }
     if total > 0 {
-        write_cached_total_bytes(kind, total);
+        write_cached_total_bytes(kind, profile, total);
     }
 
     let mut file = if resumed {
@@ -395,8 +423,9 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
         }
         file.write_all(&buffer[..n]).map_err(|e| format!("寫入檔案失敗: {}", e))?;
         downloaded += n as u64;
-        set_progress(
+        set_progress_for(
             kind,
+            profile,
             ModelProgress {
                 downloaded_bytes: downloaded,
                 total_bytes: total,
@@ -408,8 +437,9 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
     drop(file);
 
     if let Some(expected) = spec.sha256 {
-        set_progress(
+        set_progress_for(
             kind,
+            profile,
             ModelProgress {
                 downloaded_bytes: downloaded,
                 total_bytes: total,
@@ -420,7 +450,7 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
         let actual = sha256_of_file(&tmp_dest)?;
         if actual != expected {
             let _ = fs::remove_file(&tmp_dest);
-            clear_download_artifacts(kind);
+            clear_download_artifacts(kind, profile);
             return Err(format!(
                 "Checksum mismatch: expected {}, got {}",
                 expected, actual
@@ -432,7 +462,7 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
         let _ = fs::remove_file(&dest);
     }
     fs::rename(&tmp_dest, &dest).map_err(|e| e.to_string())?;
-    clear_download_artifacts(kind);
+    clear_download_artifacts(kind, profile);
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     if let Some(coreml_url) = spec.coreml_encoder_url {
@@ -442,8 +472,9 @@ fn download_blocking(kind: ModelKind) -> Result<(), String> {
         }
     }
 
-    set_progress(
+    set_progress_for(
         kind,
+        profile,
         ModelProgress {
             downloaded_bytes: downloaded,
             total_bytes: total,
@@ -574,37 +605,57 @@ mod tests {
     #[test]
     fn test_model_path_uses_expected_filenames() {
         with_temp_model_dir(|dir| {
+            set_model_profile(ModelProfile::Turbo);
             assert_eq!(model_path(ModelKind::Whisper), dir.join("ggml-base-q5_1.bin"));
             assert_eq!(
                 model_path(ModelKind::Llm),
                 dir.join("qwen2.5-0.5b-instruct-q5_k_m.gguf")
             );
+
+            set_model_profile(ModelProfile::Pro);
+            assert_eq!(model_path(ModelKind::Whisper), dir.join("ggml-small-q5_1.bin"));
+            assert_eq!(
+                model_path(ModelKind::Llm),
+                dir.join("qwen2.5-1.5b-instruct-q4_k_m.gguf")
+            );
         });
     }
 
     #[test]
-    fn test_is_model_ready_reflects_file_presence() {
+    fn test_is_model_ready_reflects_file_presence_per_profile() {
         with_temp_model_dir(|_dir| {
+            set_model_profile(ModelProfile::Turbo);
             assert!(!is_model_ready(ModelKind::Whisper));
             assert_eq!(default_model_path(ModelKind::Whisper), None);
 
-            let path = model_path(ModelKind::Whisper);
-            fs::write(&path, b"fake model bytes").unwrap();
+            let turbo_whisper = model_path(ModelKind::Whisper);
+            fs::write(&turbo_whisper, b"fake turbo model bytes").unwrap();
 
             assert!(is_model_ready(ModelKind::Whisper));
             assert_eq!(
                 default_model_path(ModelKind::Whisper),
-                Some(path.to_string_lossy().to_string())
+                Some(turbo_whisper.to_string_lossy().to_string())
             );
-            // 另一個模型種類不應受影響
-            assert!(!is_model_ready(ModelKind::Llm));
+
+            // 切換到 Pro，Pro 模型尚未下載，is_model_ready 應為 false
+            set_model_profile(ModelProfile::Pro);
+            assert!(!is_model_ready(ModelKind::Whisper));
+            assert_eq!(default_model_path(ModelKind::Whisper), None);
+
+            // 再切回 Turbo，Turbo 模型依舊已就緒，不會消失！
+            set_model_profile(ModelProfile::Turbo);
+            assert!(is_model_ready(ModelKind::Whisper));
+            assert_eq!(
+                default_model_path(ModelKind::Whisper),
+                Some(turbo_whisper.to_string_lossy().to_string())
+            );
         });
     }
 
     #[test]
     fn test_get_progress_falls_back_to_file_presence_when_untracked() {
         with_temp_model_dir(|_dir| {
-            // 從未呼叫過 start_download，PROGRESS 表裡沒有紀錄 -> 依檔案是否存在推斷狀態
+            set_model_profile(ModelProfile::Turbo);
             let path = model_path(ModelKind::Whisper);
             let progress = get_progress(ModelKind::Whisper);
             assert_eq!(progress.state, ModelDownloadState::NotStarted);
@@ -619,12 +670,13 @@ mod tests {
     #[test]
     fn test_get_progress_recovers_partial_download_from_disk() {
         with_temp_model_dir(|_dir| {
-            let part_path = partial_model_path(ModelKind::Whisper);
+            set_model_profile(ModelProfile::Turbo);
+            let part_path = partial_model_path(ModelKind::Whisper, ModelProfile::Turbo);
             if let Some(parent) = part_path.parent() {
                 fs::create_dir_all(parent).unwrap();
             }
             fs::write(&part_path, b"partial-bytes").unwrap();
-            fs::write(download_meta_path(ModelKind::Whisper), b"1024").unwrap();
+            fs::write(download_meta_path(ModelKind::Whisper, ModelProfile::Turbo), b"1024").unwrap();
 
             let progress = get_progress(ModelKind::Whisper);
             assert_eq!(progress.state, ModelDownloadState::Downloading);
@@ -634,10 +686,12 @@ mod tests {
     }
 
     #[test]
-    fn test_set_progress_is_isolated_per_kind() {
+    fn test_set_progress_is_isolated_per_kind_and_profile() {
         with_temp_model_dir(|_dir| {
-            set_progress(
+            set_model_profile(ModelProfile::Turbo);
+            set_progress_for(
                 ModelKind::Llm,
+                ModelProfile::Turbo,
                 ModelProgress {
                     downloaded_bytes: 512,
                     total_bytes: 1024,
@@ -650,15 +704,18 @@ mod tests {
             assert_eq!(llm_progress.downloaded_bytes, 512);
             assert_eq!(llm_progress.state, ModelDownloadState::Downloading);
 
-            // Whisper 這個種類完全沒被寫入過，不應該讀到 Llm 剛設定的數值
-            let whisper_progress = get_progress(ModelKind::Whisper);
-            assert_ne!(whisper_progress.downloaded_bytes, 512);
+            // 切換到 Pro，不應讀到 Turbo 的 512 進度
+            set_model_profile(ModelProfile::Pro);
+            let pro_llm_progress = get_progress(ModelKind::Llm);
+            assert_ne!(pro_llm_progress.downloaded_bytes, 512);
+            assert_eq!(pro_llm_progress.state, ModelDownloadState::NotStarted);
         });
     }
 
     #[test]
     fn test_start_download_short_circuits_when_already_ready() {
         with_temp_model_dir(|_dir| {
+            set_model_profile(ModelProfile::Turbo);
             let path = model_path(ModelKind::Whisper);
             fs::write(&path, b"already downloaded").unwrap();
 

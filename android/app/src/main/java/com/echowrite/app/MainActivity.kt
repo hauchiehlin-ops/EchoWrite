@@ -154,8 +154,12 @@ class MainActivity : AppCompatActivity() {
                     setMargins(0, 0, 0, 10)
                 }
                 setOnClickListener {
-                    EchoWriteCore.setSavedModelProfile(this@MainActivity, profile)
-                    renderModelHub()
+                    if (profile != currentProfile) {
+                        EchoWriteCore.setSavedModelProfile(this@MainActivity, profile)
+                        stopPolling()
+                        container.removeAllViews()
+                        renderModelHub()
+                    }
                 }
             }
             val t = TextView(this).apply {
@@ -175,22 +179,30 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(profileCard)
 
+        val whisperTarget = if (currentProfile == ModelProfile.PRO) "ggml-small-q5_1.bin" else "ggml-base-q5_1.bin"
+        val whisperSize = if (currentProfile == ModelProfile.PRO) "~320 MB" else "~57 MB"
+        val whisperTitle = if (currentProfile == ModelProfile.PRO) "🎙️ 本地語音辨識 (Whisper Small 旗艦)" else "🎙️ 本地語音辨識 (Whisper Base 極速)"
+
+        val llmTarget = if (currentProfile == ModelProfile.PRO) "qwen2.5-1.5b-instruct-q4_k_m.gguf" else "qwen2.5-0.5b-instruct-q5_k_m.gguf"
+        val llmSize = if (currentProfile == ModelProfile.PRO) "~986 MB" else "~498 MB"
+        val llmTitle = if (currentProfile == ModelProfile.PRO) "🧠 本地語意重塑 (Qwen 1.5B 旗艦)" else "🧠 本地語意重塑 (Qwen 0.5B 極速)"
+
         // 模型 1：Whisper ASR
         layout.addView(createModelCard(
             kind = EchoWriteCore.MODEL_KIND_WHISPER,
-            title = "🎙️ 本地語音辨識引擎 (Whisper ASR)",
+            title = whisperTitle,
             description = "將語音訊號離線轉換為繁體中文草稿，具備台灣術語與俚語強化。",
-            targetFile = "whisper-tiny-q8_0.bin",
-            approxSize = "~75 MB"
+            targetFile = whisperTarget,
+            approxSize = whisperSize
         ))
 
         // 模型 2：Qwen SLM
         layout.addView(createModelCard(
             kind = EchoWriteCore.MODEL_KIND_LLM,
-            title = "🧠 本地語意重塑引擎 (Qwen SLM)",
+            title = llmTitle,
             description = "將粗糙辨識草稿自動去贅字、潤飾句構、套用個人口吻並自動排版。",
-            targetFile = "qwen2.5-0.5b-instruct-q4_k_m.gguf",
-            approxSize = "~350 MB"
+            targetFile = llmTarget,
+            approxSize = llmSize
         ))
 
         container.addView(scroll)
@@ -205,6 +217,12 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
         }
+        val fileSubView = TextView(this).apply {
+            text = "檔案：$targetFile ($approxSize)"
+            textSize = 11f
+            setTextColor(Color.parseColor("#00E5FF"))
+            setPadding(0, 2, 0, 0)
+        }
         val descView = TextView(this).apply {
             text = description
             textSize = 12f
@@ -212,6 +230,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 4, 0, 12)
         }
         card.addView(titleView)
+        card.addView(fileSubView)
         card.addView(descView)
 
         // 狀態與進度列
@@ -262,6 +281,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startDownloadProgressPolling() {
+        stopPolling()
+        updateModelProgress(EchoWriteCore.MODEL_KIND_WHISPER)
+        updateModelProgress(EchoWriteCore.MODEL_KIND_LLM)
         downloadPoller = object : Runnable {
             override fun run() {
                 updateModelProgress(EchoWriteCore.MODEL_KIND_WHISPER)

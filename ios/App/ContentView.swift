@@ -71,6 +71,7 @@ struct ContentView: View {
 // MARK: - 1. 模型管理與沙盒測試 (Model Hub & Testing)
 struct ModelHubView: View {
     @ObservedObject var processingService: AudioProcessingService
+    @State private var currentProfile: ModelProfile = ewGetModelProfile()
     @State private var whisperProgress = ModelProgress(downloadedBytes: 0, totalBytes: 0, state: .notStarted, error: nil)
     @State private var llmProgress = ModelProgress(downloadedBytes: 0, totalBytes: 0, state: .notStarted, error: nil)
     @State private var pollTimer: Timer?
@@ -105,6 +106,30 @@ struct ModelHubView: View {
                     .padding()
                     .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
 
+                    // AI 效能分級切換卡片 (Dynamic Model Profiling)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("🚀 AI 模型效能分級 (Dynamic Profiling)")
+                            .font(.headline)
+                        Text("依據設備效能與即時性需求自由切換模型組合：")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 12) {
+                            profileCardButton(
+                                title: "⚡ Turbo 極速",
+                                subtitle: "Whisper Base + Qwen 0.5B (200ms 超低延遲)",
+                                profile: .turbo
+                            )
+                            profileCardButton(
+                                title: "🏆 Pro 旗艦",
+                                subtitle: "Whisper Small + Qwen 1.5B (頂級邏輯長文潤飾)",
+                                profile: .pro
+                            )
+                        }
+                    }
+                    .padding()
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+
                     // 模型下載狀態卡片
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
@@ -118,9 +143,15 @@ struct ModelHubView: View {
                             }
                         }
 
+                        let isPro = currentProfile == .pro
+                        let whisperTitle = isPro ? "Whisper Small 旗艦語音辨識" : "Whisper Base 極速語音辨識"
+                        let whisperSub = isPro ? "320 MB · 高精度繁中語意 · ANE/Metal" : "57 MB · 200ms 極速辨識 · ANE/Metal"
+                        let llmTitle = isPro ? "Qwen 1.5B 旗艦語言重塑" : "Qwen 0.5B 極速語言重塑"
+                        let llmSub = isPro ? "986 MB · 頂級文采與長文潤飾 · Metal" : "498 MB · 超低延遲口語潤飾 · Metal"
+
                         modelProgressRow(
-                            title: "Whisper ASR 語音辨識引擎",
-                            subtitle: "140 MB · 繁體中文聲學特化",
+                            title: whisperTitle,
+                            subtitle: whisperSub,
                             progress: whisperProgress,
                             onDownload: { ewStartModelDownload(kind: .whisper) }
                         )
@@ -128,8 +159,8 @@ struct ModelHubView: View {
                         Divider()
 
                         modelProgressRow(
-                            title: "Qwen 語言重塑與排版引擎",
-                            subtitle: "390 MB · GGUF 量化 Metal 加速",
+                            title: llmTitle,
+                            subtitle: llmSub,
                             progress: llmProgress,
                             onDownload: { ewStartModelDownload(kind: .llm) }
                         )
@@ -159,6 +190,43 @@ struct ModelHubView: View {
             .onAppear(perform: startPolling)
             .onDisappear { pollTimer?.invalidate() }
         }
+    }
+
+    private func profileCardButton(title: String, subtitle: String, profile: ModelProfile) -> some View {
+        let isSelected = currentProfile == profile
+        return Button(action: {
+            if currentProfile != profile {
+                currentProfile = profile
+                ewSetModelProfile(profile: profile)
+                refresh()
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(title)
+                        .font(.subheadline.bold())
+                        .foregroundColor(isSelected ? .cyan : .primary)
+                    Spacer()
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.cyan)
+                    }
+                }
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
+            .background(isSelected ? Color.cyan.opacity(0.15) : Color(uiColor: .tertiarySystemBackground))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? Color.cyan : Color.clear, lineWidth: 1.5)
+            )
+            .cornerRadius(10)
+        }
+        .buttonStyle(.plain)
     }
 
     private func modelProgressRow(title: String, subtitle: String, progress: ModelProgress, onDownload: @escaping () -> Void) -> some View {
