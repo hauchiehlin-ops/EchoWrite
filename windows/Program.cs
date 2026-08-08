@@ -191,9 +191,25 @@ namespace EchoWrite
             }
 
             // 2. 建立系統托盤圖示與右鍵選單 (System Tray Icon & ContextMenu)
+            System.Drawing.Icon appIcon = System.Drawing.SystemIcons.Application;
+            try
+            {
+                string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "EchoWrite.ico");
+                if (File.Exists(iconPath))
+                {
+                    appIcon = new System.Drawing.Icon(iconPath);
+                }
+                else
+                {
+                    var exeIcon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                    if (exeIcon != null) appIcon = exeIcon;
+                }
+            }
+            catch { }
+
             _trayIcon = new NotifyIcon()
             {
-                Icon = System.Drawing.SystemIcons.Application,
+                Icon = appIcon,
                 Text = "EchoWrite - 準備中...",
                 Visible = true
             };

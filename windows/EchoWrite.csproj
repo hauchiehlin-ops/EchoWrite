@@ -7,7 +7,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>EchoWrite</AssemblyName>
     <RootNamespace>EchoWrite</RootNamespace>
+    <ApplicationIcon>EchoWrite.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="EchoWrite.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="echowrite_core.dll" CopyToOutputDirectory="PreserveNewest" />
