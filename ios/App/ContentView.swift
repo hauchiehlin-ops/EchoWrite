@@ -6,6 +6,8 @@ import AVFoundation
 struct ContentView: View {
     @ObservedObject var processingService: AudioProcessingService
     @State private var selectedTab = 0
+    @State private var isVoiceDictationPresented = false
+    @State private var dictationStyle: EchoWriteStyle = .casual
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -42,6 +44,26 @@ struct ContentView: View {
         .tint(Color(red: 0.0, green: 0.75, blue: 1.0))
         .onAppear {
             EchoWriteShared.configureSharedModelDirectory()
+        }
+        .onOpenURL { url in
+            handleIncomingURL(url)
+        }
+        .fullScreenCover(isPresented: $isVoiceDictationPresented) {
+            VoiceDictationSheet(style: dictationStyle, isPresented: $isVoiceDictationPresented)
+        }
+    }
+
+    private func handleIncomingURL(_ url: URL) {
+        guard url.scheme == "echowrite" else { return }
+        if url.host == "record" || url.path.contains("record") {
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            if let styleParam = components?.queryItems?.first(where: { $0.name == "style" })?.value,
+               let style = EchoWriteStyle(rawValue: styleParam) {
+                dictationStyle = style
+            } else {
+                dictationStyle = EchoWriteShared.getSelectedStyle()
+            }
+            isVoiceDictationPresented = true
         }
     }
 }
@@ -825,6 +847,316 @@ struct StepGuideRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: - 6. 即時語音重塑彈窗 (Voice Dictation Sheet - Launched via Keyboard URL)
+struct VoiceDictationSheet: View {
+    @State var style: EchoWriteStyle
+    @Binding var isPresented: Bool
+
+    @State private var isRecording = false
+    @State private var isProcessing = false
+    @State private var recordingSeconds = 0
+    @State private var recordingTimer: Timer?
+    @State private var audioRecorder: AVAudioRecorder?
+    @State private var tempAudioURL: URL?
+    @State private var resultText = ""
+    @State private var statusMessage = "準備就緒"
+    @State private var audioMeterLevel: CGFloat = 0.0
+
+    var body: some View {
+        ZStack {
+            // 背景漸層
+            LinearGradient(
+                colors: [Color(red: 0.04, green: 0.06, blue: 0.12), Color(red: 0.08, green: 0.10, blue: 0.20)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 24) {
+                // 頂部導航
+                HStack {
+                    Button {
+                        stopRecordingAndCancel()
+                        isPresented = false
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text("⚡ EchoWrite 語音重塑")
+                        .font(.headline.bold())
+                        .foregroundStyle(LinearGradient(colors: [.cyan, .blue], startPoint: .leading, endPoint: .trailing))
+
+                    Spacer()
+
+                    // 佔位以居中
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .opacity(0)
+                }
+                .padding(.horizontal)
+
+                // 風格標籤
+                HStack(spacing: 8) {
+                    Image(systemName: style.icon)
+                        .foregroundStyle(.cyan)
+                    Text(style.title)
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.white)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.1), in: Capsule())
+
+                Spacer()
+
+                // 即時聲波與狀態
+                VStack(spacing: 16) {
+                    if isRecording {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.red.opacity(0.3), lineWidth: 4)
+                                .frame(width: 140, height: 140)
+                                .scaleEffect(1.0 + audioMeterLevel * 0.4)
+                                .animation(.easeOut(duration: 0.1), value: audioMeterLevel)
+
+                            Circle()
+                                .fill(Color.red.opacity(0.8))
+                                .frame(width: 90, height: 90)
+
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 36))
+                                .foregroundStyle(.white)
+                        }
+
+                        Text(String(format: "⏱ %02d:%02d 正在聆聽...", recordingSeconds / 60, recordingSeconds % 60))
+                            .font(.title3.bold().monospacedDigit())
+                            .foregroundStyle(.white)
+
+                        Text("請自然說話，完畢後點擊下方完成按鈕")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if isProcessing {
+                        ProgressView()
+                            .scaleEffect(1.8)
+                            .tint(.cyan)
+                            .padding(.bottom, 8)
+
+                        Text("⚡ ANE 加速 · 本地神經網路重塑中...")
+                            .font(.headline.bold())
+                            .foregroundStyle(.cyan)
+
+                        Text(statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if !resultText.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Label("重塑完成", systemImage: "checkmark.circle.fill")
+                                    .font(.headline.bold())
+                                    .foregroundStyle(.green)
+                                Spacer()
+                                Text("已複製到剪貼簿")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            ScrollView {
+                                Text(resultText)
+                                    .font(.body)
+                                    .foregroundStyle(.white)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxHeight: 180)
+                            .padding()
+                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                        }
+                        .padding(.horizontal)
+                    }
+                }
+
+                Spacer()
+
+                // 底部按鈕
+                VStack(spacing: 12) {
+                    if isRecording {
+                        Button {
+                            finishRecordingAndProcess()
+                        } label: {
+                            HStack {
+                                Image(systemName: "stop.circle.fill")
+                                    .font(.title3)
+                                Text("完成錄音並重塑")
+                                    .font(.headline.bold())
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(LinearGradient(colors: [.red, .orange], startPoint: .leading, endPoint: .trailing))
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .shadow(color: .red.opacity(0.4), radius: 8, y: 3)
+                        }
+                    } else if !resultText.isEmpty {
+                        Button {
+                            isPresented = false
+                        } label: {
+                            HStack {
+                                Image(systemName: "arrow.left.circle.fill")
+                                    .font(.title3)
+                                Text("切回應用程式 (LINE) 自動貼上")
+                                    .font(.headline.bold())
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(LinearGradient(colors: [.cyan, .blue], startPoint: .leading, endPoint: .trailing))
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .shadow(color: .blue.opacity(0.4), radius: 8, y: 3)
+                        }
+                    } else if !isProcessing {
+                        Button {
+                            startLiveRecording()
+                        } label: {
+                            HStack {
+                                Image(systemName: "mic.fill")
+                                    .font(.title3)
+                                Text("開始說話")
+                                    .font(.headline.bold())
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing))
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 20)
+            }
+            .padding(.top, 10)
+        }
+        .onAppear {
+            startLiveRecording()
+        }
+        .onDisappear {
+            stopRecordingAndCancel()
+        }
+    }
+
+    private func startLiveRecording() {
+        guard !isRecording else { return }
+        resultText = ""
+        statusMessage = "語音錄製中..."
+        recordingSeconds = 0
+
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth])
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            statusMessage = "麥克風初始化失敗：\(error.localizedDescription)"
+            return
+        }
+
+        let audioFilename = FileManager.default.temporaryDirectory.appendingPathComponent("dictation_\(UUID().uuidString).wav")
+        self.tempAudioURL = audioFilename
+
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false
+        ]
+
+        do {
+            audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
+            audioRecorder?.isMeteringEnabled = true
+            audioRecorder?.record()
+            isRecording = true
+            
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+
+            recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+                audioRecorder?.updateMeters()
+                let power = audioRecorder?.averagePower(forChannel: 0) ?? -160.0
+                let linear = max(0.0, min(1.0, CGFloat((power + 50.0) / 50.0)))
+                audioMeterLevel = linear
+
+                let sec = Int(audioRecorder?.currentTime ?? 0)
+                if sec != recordingSeconds {
+                    recordingSeconds = sec
+                }
+            }
+        } catch {
+            statusMessage = "無法啟動錄音：\(error.localizedDescription)"
+        }
+    }
+
+    private func finishRecordingAndProcess() {
+        isRecording = false
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        audioRecorder?.stop()
+        audioRecorder = nil
+
+        guard let audioURL = tempAudioURL, FileManager.default.fileExists(atPath: audioURL.path) else {
+            statusMessage = "錄音檔案遺失"
+            return
+        }
+
+        isProcessing = true
+        statusMessage = "正在執行 Whisper 本地轉錄與 Qwen 繁中語意潤飾..."
+
+        let contextBefore = EchoWriteShared.getSharedContextBefore()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            var processed = ""
+            do {
+                processed = try ewProcessAudioFileWithContext(audioPath: audioURL.path, style: style.rawValue, contextBefore: contextBefore)
+            } catch {
+                processed = "⚠️ 辨識處理失敗：\(error.localizedDescription)"
+            }
+
+            try? FileManager.default.removeItem(at: audioURL)
+
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                self.resultText = processed
+
+                // 1. 寫入剪貼簿
+                UIPasteboard.general.string = processed
+
+                // 2. 寫入 App Group 共享檔案以供鍵盤 Extension 自動貼入
+                if let resultURL = EchoWriteShared.sharedResultURL {
+                    try? processed.write(to: resultURL, atomically: true, encoding: .utf8)
+                }
+
+                let generator = UINotificationFeedbackGenerator()
+                generator.notificationOccurred(.success)
+            }
+        }
+    }
+
+    private func stopRecordingAndCancel() {
+        isRecording = false
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        audioRecorder?.stop()
+        audioRecorder = nil
+        if let audioURL = tempAudioURL {
+            try? FileManager.default.removeItem(at: audioURL)
+        }
     }
 }
 

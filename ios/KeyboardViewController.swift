@@ -24,23 +24,10 @@ class KeyboardViewController: UIInputViewController {
     private var waveformView: AudioWaveformView!
     
     private var recordButton: UIButton!
-    private var swipeCancelHintLabel: UILabel!
     private var statusLabel: UILabel!
     
     // MARK: - 狀態管理
     private var currentStyle: EchoWriteStyle = .casual
-    private var isRecording = false
-    private var isWaitingForResult = false
-    private var recordingSeconds = 0
-    private var recordingTimer: Timer?
-    private var resultTimeoutTimer: Timer?
-    
-    private var audioEngine: AVAudioEngine?
-    private var optimisticDraftLength = 0
-    private var optimisticDraftText = ""
-    
-    private let resultTimeoutSeconds: TimeInterval = 20
-    private let swipeToCancelThreshold: CGFloat = 70
     private var heightConstraint: NSLayoutConstraint?
 
     // MARK: - 生命週期
@@ -62,13 +49,12 @@ class KeyboardViewController: UIInputViewController {
             h.isActive = true
             heightConstraint = h
         }
+        
+        checkForPendingTranscriptionResult()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        if isRecording {
-            cancelRecording()
-        }
     }
 
     // MARK: - UI 佈局建置
@@ -177,16 +163,6 @@ class KeyboardViewController: UIInputViewController {
         recordButton.layer.shadowOffset = CGSize(width: 0, height: 2)
         recordButton.addTarget(self, action: #selector(recordButtonTapped), for: .touchUpInside)
 
-        let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handleSwipeToCancel(_:)))
-        recordButton.addGestureRecognizer(panGesture)
-
-        swipeCancelHintLabel = UILabel()
-        swipeCancelHintLabel.translatesAutoresizingMaskIntoConstraints = false
-        swipeCancelHintLabel.text = "◀ 錄音中向左滑動取消"
-        swipeCancelHintLabel.font = .systemFont(ofSize: 10, weight: .regular)
-        swipeCancelHintLabel.textColor = UIColor(white: 0.5, alpha: 1.0)
-        swipeCancelHintLabel.alpha = 0
-
         statusLabel = UILabel()
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.text = "完全離線本地端 AI · 絕不上傳雲端"
@@ -194,7 +170,6 @@ class KeyboardViewController: UIInputViewController {
         statusLabel.textColor = UIColor(white: 0.45, alpha: 1.0)
 
         actionStack.addArrangedSubview(recordButton)
-        actionStack.addArrangedSubview(swipeCancelHintLabel)
         actionStack.addArrangedSubview(statusLabel)
         rootContainer.addArrangedSubview(actionStack)
 
@@ -325,295 +300,79 @@ class KeyboardViewController: UIInputViewController {
         }
     }
 
-    // MARK: - 錄音與手勢互動
+    // MARK: - 語音重塑喚醒與結果自動打入
     @objc private func recordButtonTapped() {
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
 
-        if isRecording {
-            stopRecordingAndDispatchToApp()
-        } else if !isWaitingForResult {
-            checkPermissionAndStart()
-        }
-    }
-
-    @objc private func handleSwipeToCancel(_ gesture: UIPanGestureRecognizer) {
-        guard isRecording else { return }
-        let translation = gesture.translation(in: view)
-        let leftwardOffset = min(0, translation.x)
-
-        switch gesture.state {
-        case .changed:
-            recordButton.transform = CGAffineTransform(translationX: leftwardOffset, y: 0)
-            let progress = min(1.0, abs(leftwardOffset) / swipeToCancelThreshold)
-            recordButton.alpha = 1.0 - (progress * 0.4)
-            if abs(leftwardOffset) >= swipeToCancelThreshold {
-                swipeCancelHintLabel.text = "⚠️ 放開以立即捨棄"
-                swipeCancelHintLabel.textColor = .systemRed
-            } else {
-                swipeCancelHintLabel.text = "◀ 錄音中向左滑動取消"
-                swipeCancelHintLabel.textColor = UIColor(white: 0.7, alpha: 1.0)
-            }
-        case .ended, .cancelled:
-            if abs(leftwardOffset) >= swipeToCancelThreshold {
-                cancelRecording()
-            } else {
-                UIView.animate(withDuration: 0.2) {
-                    self.recordButton.transform = .identity
-                    self.recordButton.alpha = 1.0
-                }
-            }
-        default:
-            break
-        }
-    }
-
-    private func checkPermissionAndStart() {
-        let status = AVCaptureDevice.authorizationStatus(for: .audio)
-        if status == .notDetermined {
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                if granted {
-                    DispatchQueue.main.async { self.startRecording() }
-                }
-            }
-            return
-        } else if status == .denied || status == .restricted {
-            recordButton.setTitle("❌ 請至設定允許麥克風權限", for: .normal)
-            recordButton.backgroundColor = .systemOrange
-            return
-        }
-        startRecording()
-    }
-
-    private func startRecording() {
-        guard let audioURL = EchoWriteShared.sharedAudioURL else {
-            recordButton.setTitle("❌ 未啟用 App Group 容器", for: .normal)
-            recordButton.backgroundColor = .systemOrange
-            return
-        }
-
-        let audioSession = AVAudioSession.sharedInstance()
-        do {
-            try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker])
-            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            recordButton.setTitle("❌ 音訊工作階段建立失敗", for: .normal)
-            return
-        }
-
-        isRecording = true
-        optimisticDraftLength = 0
-        optimisticDraftText = ""
-        recordingSeconds = 0
-        timerLabel.text = "⏱ 00:00"
-        
-        let startHaptic = UIImpactFeedbackGenerator(style: .medium)
-        startHaptic.impactOccurred()
-
-        recordButton.setTitle("🔴 正在聆聽...（點擊完成）", for: .normal)
-        recordButton.backgroundColor = UIColor(red: 0.95, green: 0.25, blue: 0.35, alpha: 1.0)
-        swipeCancelHintLabel.alpha = 1.0
-        previewTextLabel.text = "🎙️ 「正在即時辨識說話內容...」"
-        previewTextLabel.textColor = UIColor(red: 0.0, green: 0.9, blue: 1.0, alpha: 1.0)
-
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.recordingSeconds += 1
-            let mins = self.recordingSeconds / 60
-            let secs = self.recordingSeconds % 60
-            self.timerLabel.text = String(format: "⏱ %02d:%02d", mins, secs)
-            
-            // 樂觀串流打字動態草稿提示
-            if self.isRecording && self.recordingSeconds % 2 == 0 {
-                self.updateOptimisticDraftStream()
-            }
-        }
-
-        audioEngine = AVAudioEngine()
-        let inputNode = audioEngine!.inputNode
-        let recordingFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
-
-        do {
-            if FileManager.default.fileExists(atPath: audioURL.path) {
-                try? FileManager.default.removeItem(at: audioURL)
-            }
-            let file = try AVAudioFile(forWriting: audioURL, settings: recordingFormat.settings)
-
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] (buffer, _) in
-                do {
-                    try file.write(from: buffer)
-                    
-                    // 計算 RMS 振幅更新聲波視圖
-                    let channelData = buffer.int16ChannelData?[0]
-                    let frameLength = Int(buffer.frameLength)
-                    if let data = channelData, frameLength > 0 {
-                        var sum: Float = 0
-                        for i in 0..<frameLength {
-                            let val = Float(data[i]) / 32768.0
-                            sum += val * val
-                        }
-                        let rms = sqrt(sum / Float(frameLength))
-                        DispatchQueue.main.async {
-                            self?.waveformView.updateAmplitude(CGFloat(min(1.0, rms * 5.0)))
-                        }
-                    }
-                } catch {
-                    print("EchoWrite: Buffer write error: \(error)")
-                }
-            }
-
-            audioEngine?.prepare()
-            try audioEngine?.start()
-        } catch {
-            recordButton.setTitle("❌ 錄音引擎啟動失敗", for: .normal)
-            cancelRecording()
-        }
-    }
-
-    /// 樂觀排版：錄音時將中間草稿打入輸入框
-    private func updateOptimisticDraftStream() {
-        let sampleDrafts = [
-            "語音輸入處理中...",
-            "語音輸入整理中...",
-            "AI 即時運算中..."
-        ]
-        let draft = sampleDrafts[min(sampleDrafts.count - 1, recordingSeconds / 2)]
-        previewTextLabel.text = "📝 「\(draft)」"
-    }
-
-    /// 滑動取消：捨棄錄音、復原草稿
-    private func cancelRecording() {
-        guard isRecording else { return }
-        isRecording = false
-        recordingTimer?.invalidate()
-        waveformView.reset()
-
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
-
-        if let audioURL = EchoWriteShared.sharedAudioURL {
-            try? FileManager.default.removeItem(at: audioURL)
-        }
-
-        // 清除任何已樂觀打入的草稿字元
-        if optimisticDraftLength > 0 {
-            for _ in 0..<optimisticDraftLength {
-                textDocumentProxy.deleteBackward()
-            }
-            optimisticDraftLength = 0
-        }
-
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.warning)
-
-        UIView.animate(withDuration: 0.2) {
-            self.recordButton.transform = .identity
-            self.recordButton.alpha = 1.0
-            self.swipeCancelHintLabel.alpha = 0
-        }
-        previewTextLabel.text = "❌ 已取消本次語音輸入"
-        previewTextLabel.textColor = UIColor(white: 0.6, alpha: 1.0)
-        resetButton()
-    }
-
-    /// 停止錄音並派發給主 App 執行本地 ASR + LLM 重塑
-    private func stopRecordingAndDispatchToApp() {
-        isRecording = false
-        recordingTimer?.invalidate()
-        waveformView.reset()
-
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
-
-        guard ewIsModelReady(kind: .whisper), ewIsModelReady(kind: .llm) else {
-            recordButton.setTitle("⚠️ 請開啟 App 下載本地模型", for: .normal)
-            recordButton.backgroundColor = .systemOrange
-            previewTextLabel.text = "⚠️ 本地 Whisper/Qwen 模型尚未下載"
-            return
-        }
-
-        EchoWriteShared.setSelectedStyle(currentStyle)
-
-        // 提取游標前文情境 Context
+        // 1. 提取游標前文情境 Context 與當前風格
         let contextBefore = textDocumentProxy.documentContextBeforeInput ?? ""
         EchoWriteShared.setSharedContextBefore(contextBefore)
+        EchoWriteShared.setSelectedStyle(currentStyle)
 
-        isWaitingForResult = true
-        recordButton.setTitle("⚡ LLM 語意重塑與排版中...", for: .normal)
-        recordButton.backgroundColor = UIColor(red: 0.35, green: 0.25, blue: 0.65, alpha: 1.0)
-        recordButton.isEnabled = false
-        swipeCancelHintLabel.alpha = 0
-        previewTextLabel.text = "⚙️ 正在套用 \(currentStyle.title) 進行台灣繁體中文潤飾..."
+        recordButton.setTitle("🎙️ 正在喚醒 EchoWrite 語音重塑...", for: .normal)
+        previewTextLabel.text = "⚡ 正在喚醒本地 AI 雙引擎語音介面..."
+        previewTextLabel.textColor = UIColor(red: 0.0, green: 0.9, blue: 1.0, alpha: 1.0)
 
-        DarwinNotificationCenter.observe(.resultReady) { [weak self] in
-            DispatchQueue.main.async {
-                self?.handleResultReady()
-            }
-        }
-
-        resultTimeoutTimer?.invalidate()
-        resultTimeoutTimer = Timer.scheduledTimer(withTimeInterval: resultTimeoutSeconds, repeats: false) { [weak self] _ in
-            self?.handleResultTimeout()
-        }
-
-        DarwinNotificationCenter.post(.audioReady)
+        // 2. 透過 URL Scheme 喚醒主 App 進行全功能即時語音錄製與 ANE 神經網路重塑
+        guard let url = URL(string: "echowrite://record?style=\(currentStyle.rawValue)") else { return }
+        openContainingApp(url: url)
     }
 
-    /// 收到 AI 處理完成通知：樂觀排版原子替換
-    private func handleResultReady() {
-        guard isWaitingForResult else { return }
-        isWaitingForResult = false
-        resultTimeoutTimer?.invalidate()
-        DarwinNotificationCenter.removeAllObservers(.resultReady)
+    private func openContainingApp(url: URL) {
+        // 方法 1: 使用 Responder Chain 尋找 UIApplication
+        var responder: UIResponder? = self
+        while let r = responder {
+            if let app = r as? UIApplication {
+                app.open(url, options: [:], completionHandler: nil)
+                return
+            }
+            responder = r.next
+        }
 
+        // 方法 2: 使用 selector 透過 Responder Chain 呼叫 openURL:
+        let selector = sel_registerName("openURL:")
+        responder = self
+        while let r = responder {
+            if r.responds(to: selector) {
+                r.perform(selector, with: url)
+                return
+            }
+            responder = r.next
+        }
+
+        // 方法 3: 使用 extensionContext?.open
+        self.extensionContext?.open(url, completionHandler: nil)
+    }
+
+    /// 檢查是否有剛在主 App 完成的 AI 重塑結果，若有則自動貼入
+    private func checkForPendingTranscriptionResult() {
         guard let resultURL = EchoWriteShared.sharedResultURL,
+              FileManager.default.fileExists(atPath: resultURL.path),
               let text = try? String(contentsOf: resultURL, encoding: .utf8),
               !text.isEmpty else {
-            recordButton.setTitle("❌ 辨識無內容，請重試", for: .normal)
-            recordButton.backgroundColor = .systemOrange
-            recordButton.isEnabled = true
-            previewTextLabel.text = "💬 語音音量過小或無法辨識"
+            resetButton()
             return
         }
 
-        // 1. 若先前有樂觀草稿，先退回刪除
-        if optimisticDraftLength > 0 {
-            for _ in 0..<optimisticDraftLength {
-                textDocumentProxy.deleteBackward()
-            }
-            optimisticDraftLength = 0
-        }
-
-        // 2. 插入最終完美排版之文本
+        // 自動打入最新重塑文字！
         textDocumentProxy.insertText(text)
         try? FileManager.default.removeItem(at: resultURL)
 
-        previewTextLabel.text = "✅ 已完成：\(text.prefix(30))..."
+        previewTextLabel.text = "✅ 已自動填入：\(text.prefix(25))..."
         previewTextLabel.textColor = UIColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1.0)
-
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
-        resetButton()
-    }
 
-    private func handleResultTimeout() {
-        guard isWaitingForResult else { return }
-        isWaitingForResult = false
-        DarwinNotificationCenter.removeAllObservers(.resultReady)
-
-        recordButton.setTitle("⏱️ 逾時，請開啟 EchoWrite App", for: .normal)
-        recordButton.backgroundColor = .systemOrange
-        recordButton.isEnabled = true
-        previewTextLabel.text = "⚠️ 背景推理逾時，請先開啟主 App 一次"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            self?.resetButton()
+        }
     }
 
     private func resetButton() {
         recordButton.setTitle("🎙️ 點擊開始 EchoWrite 語音重塑", for: .normal)
         recordButton.backgroundColor = UIColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1.0)
         recordButton.isEnabled = true
-        swipeCancelHintLabel.alpha = 0
         timerLabel.text = "⏱ 00:00"
     }
 }

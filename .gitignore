@@ -27,6 +27,7 @@ android/local.properties
 
 
 # iOS/macOS build caches
+build/
 ios/build/
 macos/build/
 dist/

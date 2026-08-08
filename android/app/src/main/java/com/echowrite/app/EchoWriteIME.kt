@@ -298,15 +298,24 @@ class EchoWriteIME : InputMethodService() {
         }
 
         try {
-            audioRecord = AudioRecord(
+            val record = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
                 sampleRate,
                 channelConfig,
                 audioFormat,
                 bufferSize
             )
-            audioRecord?.startRecording()
-        } catch (e: Exception) {
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(tag, "AudioRecord state not initialized")
+                previewText?.text = "⚠️ 麥克風未就緒或被其他應用程式佔用"
+                previewText?.setTextColor(Color.parseColor("#FF9500"))
+                try { record.release() } catch (_: Throwable) {}
+                cleanupRecordingResources()
+                return
+            }
+            record.startRecording()
+            audioRecord = record
+        } catch (e: Throwable) {
             e.printStackTrace()
             Log.e(tag, "AudioRecord start failed", e)
             previewText?.text = "⚠️ 麥克風啟動失敗：${e.message ?: "未知錯誤"}"
@@ -332,30 +341,39 @@ class EchoWriteIME : InputMethodService() {
         startTimer()
 
         thread {
-            val audioData = ShortArray(bufferSize)
-            FileOutputStream(audioFile).use { fos ->
-                fos.write(ByteArray(44))
-                var totalBytesWritten = 0
+            try {
+                val audioData = ShortArray(bufferSize)
+                FileOutputStream(audioFile).use { fos ->
+                    fos.write(ByteArray(44))
+                    var totalBytesWritten = 0
 
-                while (isRecording) {
-                    val readSize = audioRecord?.read(audioData, 0, audioData.size) ?: 0
-                    if (readSize > 0) {
-                        var sum = 0.0
-                        for (i in 0 until readSize) {
-                            val sample = audioData[i]
-                            fos.write(sample.toInt() and 0xFF)
-                            fos.write((sample.toInt() shr 8) and 0xFF)
-                            totalBytesWritten += 2
-                            val normalized = sample.toDouble() / 32768.0
-                            sum += normalized * normalized
+                    while (isRecording) {
+                        val record = audioRecord ?: break
+                        val readSize = try {
+                            record.read(audioData, 0, audioData.size)
+                        } catch (e: Throwable) {
+                            0
                         }
-                        val rms = sqrt(sum / readSize.toDouble()).toFloat()
-                        mainHandler.post {
-                            waveformView?.updateAmplitude(rms * 4.0f)
+                        if (readSize > 0) {
+                            var sum = 0.0
+                            for (i in 0 until readSize) {
+                                val sample = audioData[i]
+                                fos.write(sample.toInt() and 0xFF)
+                                fos.write((sample.toInt() shr 8) and 0xFF)
+                                totalBytesWritten += 2
+                                val normalized = sample.toDouble() / 32768.0
+                                sum += normalized * normalized
+                            }
+                            val rms = sqrt(sum / readSize.toDouble()).toFloat()
+                            mainHandler.post {
+                                waveformView?.updateAmplitude(rms * 4.0f)
+                            }
                         }
                     }
+                    writeWavHeader(audioFile, totalBytesWritten)
                 }
-                writeWavHeader(audioFile, totalBytesWritten)
+            } catch (e: Throwable) {
+                Log.e(tag, "Audio recording thread exception", e)
             }
         }
     }
@@ -365,14 +383,14 @@ class EchoWriteIME : InputMethodService() {
         waveformView?.reset()
 
         try {
-            audioRecord?.stop()
-        } catch (_: Exception) {
-        }
-        try {
+            if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                audioRecord?.stop()
+            }
             audioRecord?.release()
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
+        } finally {
+            audioRecord = null
         }
-        audioRecord = null
 
         isRecording = false
         currentInputConnection?.setComposingText("", 0)
@@ -407,9 +425,15 @@ class EchoWriteIME : InputMethodService() {
 
         triggerHaptic(60)
 
-        audioRecord?.stop()
-        audioRecord?.release()
-        audioRecord = null
+        try {
+            if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                audioRecord?.stop()
+            }
+            audioRecord?.release()
+        } catch (_: Throwable) {
+        } finally {
+            audioRecord = null
+        }
 
         // 樂觀排版：立即清除輸入框內的暫存 Composing 草稿
         currentInputConnection?.setComposingText("", 0)
@@ -435,9 +459,15 @@ class EchoWriteIME : InputMethodService() {
         swipeHintText?.visibility = View.INVISIBLE
         previewText?.text = "⚙️ 正在套用【${currentStyle.title}】潤飾繁體中文..."
 
-        audioRecord?.stop()
-        audioRecord?.release()
-        audioRecord = null
+        try {
+            if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                audioRecord?.stop()
+            }
+            audioRecord?.release()
+        } catch (_: Throwable) {
+        } finally {
+            audioRecord = null
+        }
 
         val contextBefore = lastRecordedContextBefore
 

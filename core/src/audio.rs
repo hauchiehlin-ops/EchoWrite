@@ -134,6 +134,10 @@ pub fn stop_audio_capture() -> Result<String, String> {
 
 /// 將任意聲道與採樣率的 f32 音訊，降採樣並轉換為 16kHz 單聲道 i16 PCM
 fn resample_and_mono(input: &[f32], from_channels: u16, from_sample_rate: u32) -> Vec<i16> {
+    if input.is_empty() || from_channels == 0 || from_sample_rate == 0 {
+        return Vec::new();
+    }
+
     // A. 轉為單聲道 (平均所有聲道)
     let mut mono = Vec::new();
     let chunk_size = from_channels as usize;
@@ -142,17 +146,27 @@ fn resample_and_mono(input: &[f32], from_channels: u16, from_sample_rate: u32) -
         mono.push(sum / (from_channels as f32));
     }
     
+    if mono.is_empty() {
+        return Vec::new();
+    }
+
     // B. 線性插值重塑採樣率至 16000Hz
     let target_sample_rate = 16000.0;
     let ratio = (from_sample_rate as f32) / target_sample_rate;
+    if ratio <= 0.0 {
+        return Vec::new();
+    }
     let target_length = ((mono.len() as f32) / ratio).floor() as usize;
+    if target_length == 0 {
+        return Vec::new();
+    }
     
     let mut output = Vec::with_capacity(target_length);
     for i in 0..target_length {
         let src_index = (i as f32) * ratio;
-        let index_floor = src_index.floor() as usize;
+        let index_floor = (src_index.floor() as usize).min(mono.len() - 1);
         let index_ceil = (index_floor + 1).min(mono.len() - 1);
-        let weight = src_index - (index_floor as f32);
+        let weight = (src_index - (index_floor as f32)).clamp(0.0, 1.0);
         
         let sample = (1.0 - weight) * mono[index_floor] + weight * mono[index_ceil];
         
