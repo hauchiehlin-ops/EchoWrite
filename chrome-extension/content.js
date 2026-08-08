@@ -8,6 +8,7 @@ let originalPlaceholder = "";
 let isCurrentlyRecording = false;
 let durationTimer = null;
 let recordingStartedAt = 0;
+let lastModelLoadState = null;
 
 // 樂觀打字狀態：只在標準 <input>/<textarea> 上啟用（見 isDraftTarget 說明），
 // 記錄目前已插入的「草稿文字」所在區間，讓後續更新能整段替換而非不斷疊加。
@@ -52,6 +53,34 @@ function sendRuntimeMessage(message) {
     handleInvalidExtensionContext();
   }
 }
+
+function cacheModelLoadState(state, model = "", error = "") {
+  lastModelLoadState = { state, model, error };
+  renderCachedModelLoadState();
+}
+
+function renderCachedModelLoadState() {
+  if (!widgetEl || !lastModelLoadState) return;
+
+  const { state, model, error } = lastModelLoadState;
+  if (state === 'loading') {
+    updateWidgetText(model ? `🧠 正在載入 ${model}...` : "🧠 正在載入本地 AI 模型...");
+  } else if (state === 'ready') {
+    updateWidgetText(model ? `✅ ${model} 已就緒` : "✅ 本地模型已就緒");
+  } else if (state === 'failed') {
+    updateWidgetText(`⚠️ 模型載入失敗${error ? `：${error}` : ""}`);
+  } else if (state === 'fallback') {
+    updateWidgetText("⚠️ 此瀏覽器將使用規則排版模式");
+  }
+}
+
+try {
+  chrome.storage.local.get(['modelLoadState', 'modelLoadModel', 'modelLoadError'], (data) => {
+    if (data?.modelLoadState) {
+      cacheModelLoadState(data.modelLoadState, data.modelLoadModel || "", data.modelLoadError || "");
+    }
+  });
+} catch (_) {}
 
 // 監聽鍵盤 Alt + S 快捷鍵 (如果 commands 失敗時的備用)
 window.addEventListener('keydown', (e) => {
@@ -203,15 +232,7 @@ chrome.runtime.onMessage.addListener((message) => {
         break;
 
       case 'model-load-state':
-        if (message.state === 'loading') {
-          updateWidgetText(message.model ? `🧠 正在載入 ${message.model}...` : "🧠 正在載入本地 AI 模型...");
-        } else if (message.state === 'ready') {
-          updateWidgetText(message.model ? `✅ ${message.model} 已就緒` : "✅ 本地模型已就緒");
-        } else if (message.state === 'failed') {
-          updateWidgetText(`⚠️ 模型載入失敗${message.error ? `：${message.error}` : ""}`);
-        } else if (message.state === 'fallback') {
-          updateWidgetText("⚠️ 此瀏覽器將使用規則排版模式");
-        }
+        cacheModelLoadState(message.state, message.model, message.error);
         break;
 
       case 'processing-started':
@@ -282,6 +303,7 @@ function showWidget() {
     </div>
   `;
   document.body.appendChild(widgetEl);
+  renderCachedModelLoadState();
 
   const cancelBtn = widgetEl.querySelector('#ewCancelBtn');
   if (cancelBtn) {

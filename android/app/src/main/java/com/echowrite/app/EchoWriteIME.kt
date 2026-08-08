@@ -59,6 +59,7 @@ class EchoWriteIME : InputMethodService() {
     private var isDraggingToCancel = false
 
     override fun onCreateInputView(): View {
+        stopDownloadProgressPolling()
         val keyboardView = layoutInflater.inflate(R.layout.keyboard_layout, null)
         
         recordButton = keyboardView.findViewById(R.id.btn_record)
@@ -227,10 +228,20 @@ class EchoWriteIME : InputMethodService() {
         mainHandler.postDelayed(poller, 1000)
     }
 
+    private fun stopDownloadProgressPolling() {
+        progressPoller?.let { mainHandler.removeCallbacks(it) }
+        progressPoller = null
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        progressPoller?.let { mainHandler.removeCallbacks(it) }
+        stopDownloadProgressPolling()
         timerRunnable?.let { mainHandler.removeCallbacks(it) }
+    }
+
+    override fun onFinishInputView(finishingInput: Boolean) {
+        super.onFinishInputView(finishingInput)
+        stopDownloadProgressPolling()
     }
 
     private fun toggleRecording() {
