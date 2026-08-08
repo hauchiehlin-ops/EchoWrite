@@ -9,10 +9,10 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1,2"
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "2.3.0"
-    CURRENT_PROJECT_VERSION: "17"
     ECHOWRITE_IOS_APP_BUNDLE_ID: com.echowrite.app
     ECHOWRITE_IOS_KEYBOARD_BUNDLE_ID: com.echowrite.app.keyboard
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
 
 targets:
   EchoWriteKeyboard:
@@ -52,8 +52,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(ECHOWRITE_IOS_APP_BUNDLE_ID)
         INFOPLIST_FILE: App/EchoWriteApp-Info.plist
-        MARKETING_VERSION: "2.3.0"
-        CURRENT_PROJECT_VERSION: "17"
         CODE_SIGN_ENTITLEMENTS: App/EchoWriteApp.entitlements
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)"
     dependencies:

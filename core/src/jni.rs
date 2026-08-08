@@ -3,7 +3,7 @@
 use crate::models::{ModelKind, ModelProfile};
 use crate::{
     add_custom_vocabulary, format_only, get_custom_vocabulary, get_model_download_progress, initialize, is_model_ready,
-    process_audio_file_with_context, polish_raw_text, polish_raw_text_with_context,
+    polish_raw_text, polish_raw_text_with_context,
     start_model_download, set_model_profile, get_model_profile,
     add_personal_tone_sample, get_personal_tone_samples, clear_personal_tone_samples,
     export_sync_data, import_sync_data, set_model_dir,
@@ -55,13 +55,11 @@ pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_setModelDir(
 pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_initialize(
     mut env: JNIEnv,
     _: JObject,
-    whisper_path: JString,
     llm_path: JString,
 ) -> jboolean {
-    let whisper_path = get_optional_java_string(&mut env, whisper_path);
     let llm_path = get_optional_java_string(&mut env, llm_path);
 
-    match initialize(whisper_path, llm_path) {
+    match initialize(llm_path) {
         Ok(_) => JNI_TRUE,
         Err(_) => JNI_FALSE,
     }
@@ -114,42 +112,49 @@ pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_getModelDownloadProgr
     }
 }
 
-#[no_mangle]
-pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_processAudioFile(
-    mut env: JNIEnv,
-    _: JObject,
-    audio_path: JString,
-    style: JString,
-) -> jstring {
-    let audio_path = match get_java_string(&mut env, audio_path) {
-        Ok(v) => v,
-        Err(_) => return ptr::null_mut(),
-    };
-    let style = match get_java_string(&mut env, style) {
-        Ok(v) => v,
-        Err(_) => return ptr::null_mut(),
-    };
+struct JniCallbackWrapper {
+    jvm: jni::JavaVM,
+    callback_ref: jni::objects::GlobalRef,
+}
 
-    let result = match process_audio_file_with_context(audio_path, style, None) {
-        Ok(text) => text,
-        Err(_) => String::new(),
-    };
+impl crate::LlmStreamCallback for JniCallbackWrapper {
+    fn on_text_update(&self, text: String) {
+        if let Ok(mut env) = self.jvm.attach_current_thread() {
+            if let Ok(jstr) = env.new_string(text) {
+                let _ = env.call_method(
+                    &self.callback_ref,
+                    "onTextUpdate",
+                    "(Ljava/lang/String;)V",
+                    &[jni::objects::JValue::from(&jstr)]
+                );
+            }
+        }
+    }
 
-    match env.new_string(result) {
-        Ok(output) => output.into_raw(),
-        Err(_) => ptr::null_mut(),
+    fn on_error(&self, error: String) {
+        if let Ok(mut env) = self.jvm.attach_current_thread() {
+            if let Ok(jstr) = env.new_string(error) {
+                let _ = env.call_method(
+                    &self.callback_ref,
+                    "onError",
+                    "(Ljava/lang/String;)V",
+                    &[jni::objects::JValue::from(&jstr)]
+                );
+            }
+        }
     }
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_processAudioFileWithContext(
+pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_polishTextStream(
     mut env: JNIEnv,
     _: JObject,
-    audio_path: JString,
+    raw_text: JString,
     style: JString,
     context_before: JString,
+    callback: JObject,
 ) -> jstring {
-    let audio_path = match get_java_string(&mut env, audio_path) {
+    let raw_text = match get_java_string(&mut env, raw_text) {
         Ok(v) => v,
         Err(_) => return ptr::null_mut(),
     };
@@ -159,7 +164,11 @@ pub extern "system" fn Java_com_echowrite_app_EchoWriteIME_processAudioFileWithC
     };
     let context_before = get_optional_java_string(&mut env, context_before);
 
-    let result = match process_audio_file_with_context(audio_path, style, context_before) {
+    let jvm = env.get_java_vm().unwrap();
+    let callback_ref = env.new_global_ref(callback).unwrap();
+    let wrapper = Box::new(JniCallbackWrapper { jvm, callback_ref });
+
+    let result = match crate::polish_text_stream(raw_text, style, context_before, wrapper) {
         Ok(text) => text,
         Err(_) => String::new(),
     };
@@ -357,10 +366,9 @@ pub extern "system" fn Java_com_echowrite_app_EchoWriteCore_setModelDir(
 pub extern "system" fn Java_com_echowrite_app_EchoWriteCore_initialize(
     env: JNIEnv,
     obj: JObject,
-    whisper_path: JString,
     llm_path: JString,
 ) -> jboolean {
-    Java_com_echowrite_app_EchoWriteIME_initialize(env, obj, whisper_path, llm_path)
+    Java_com_echowrite_app_EchoWriteIME_initialize(env, obj, llm_path)
 }
 
 #[no_mangle]
@@ -391,24 +399,15 @@ pub extern "system" fn Java_com_echowrite_app_EchoWriteCore_getModelDownloadProg
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_echowrite_app_EchoWriteCore_processAudioFile(
+pub extern "system" fn Java_com_echowrite_app_EchoWriteCore_polishTextStream(
     env: JNIEnv,
     obj: JObject,
-    audio_path: JString,
-    style: JString,
-) -> jstring {
-    Java_com_echowrite_app_EchoWriteIME_processAudioFile(env, obj, audio_path, style)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_echowrite_app_EchoWriteCore_processAudioFileWithContext(
-    env: JNIEnv,
-    obj: JObject,
-    audio_path: JString,
+    raw_text: JString,
     style: JString,
     context_before: JString,
+    callback: JObject,
 ) -> jstring {
-    Java_com_echowrite_app_EchoWriteIME_processAudioFileWithContext(env, obj, audio_path, style, context_before)
+    Java_com_echowrite_app_EchoWriteIME_polishTextStream(env, obj, raw_text, style, context_before, callback)
 }
 
 #[no_mangle]

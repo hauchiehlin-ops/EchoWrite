@@ -672,8 +672,6 @@ public enum EchoWriteError {
     
     case InitError(message: String
     )
-    case RecordError(message: String
-    )
     case ProcessError(message: String
     )
 }
@@ -695,10 +693,7 @@ public struct FfiConverterTypeEchoWriteError: FfiConverterRustBuffer {
         case 1: return .InitError(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 2: return .RecordError(
-            message: try FfiConverterString.read(from: &buf)
-            )
-        case 3: return .ProcessError(
+        case 2: return .ProcessError(
             message: try FfiConverterString.read(from: &buf)
             )
 
@@ -718,13 +713,8 @@ public struct FfiConverterTypeEchoWriteError: FfiConverterRustBuffer {
             FfiConverterString.write(message, into: &buf)
             
         
-        case let .RecordError(message):
-            writeInt(&buf, Int32(2))
-            FfiConverterString.write(message, into: &buf)
-            
-        
         case let .ProcessError(message):
-            writeInt(&buf, Int32(3))
+            writeInt(&buf, Int32(2))
             FfiConverterString.write(message, into: &buf)
             
         }
@@ -953,6 +943,137 @@ extension ModelProfile: Equatable, Hashable {}
 
 
 
+
+
+
+public protocol LlmStreamCallback : AnyObject {
+    
+    func onTextUpdate(text: String) 
+    
+    func onError(error: String) 
+    
+}
+
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceLlmStreamCallback {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    static var vtable: UniffiVTableCallbackInterfaceLlmStreamCallback = UniffiVTableCallbackInterfaceLlmStreamCallback(
+        onTextUpdate: { (
+            uniffiHandle: UInt64,
+            text: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceLlmStreamCallback.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onTextUpdate(
+                     text: try FfiConverterString.lift(text)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onError: { (
+            uniffiHandle: UInt64,
+            error: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceLlmStreamCallback.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onError(
+                     error: try FfiConverterString.lift(error)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterCallbackInterfaceLlmStreamCallback.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface LlmStreamCallback: handle missing in uniffiFree")
+            }
+        }
+    )
+}
+
+private func uniffiCallbackInitLlmStreamCallback() {
+    uniffi_echowrite_core_fn_init_callback_vtable_llmstreamcallback(&UniffiCallbackInterfaceLlmStreamCallback.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceLlmStreamCallback {
+    fileprivate static var handleMap = UniffiHandleMap<LlmStreamCallback>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceLlmStreamCallback : FfiConverter {
+    typealias SwiftType = LlmStreamCallback
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1162,16 +1283,15 @@ public func importSyncData(jsonStr: String)throws  -> UInt32 {
 })
 }
 /**
- * 初始化核心。`whisper_path` / `llm_path` 可省略（傳 `None`）：
+ * 初始化核心。`llm_path` 可省略（傳 `None`）：
  * 省略時會自動嘗試解析本地模型目錄（`~/.echowrite/models`，或
  * `ECHOWRITE_MODEL_DIR` 指定的共享容器路徑）下是否已有模型檔案。
  * 若模型尚未下載，初始化仍會成功，但呼叫端須先透過
- * `start_model_download` 下載完成，否則後續的轉寫/潤飾呼叫會回傳
+ * `start_model_download` 下載完成，否則後續的潤飾呼叫會回傳
  * `ProcessError`（訊息含 "not ready"）提示尚未就緒。
  */
-public func initialize(whisperPath: String?, llmPath: String?)throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
+public func initialize(llmPath: String?)throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
     uniffi_echowrite_core_fn_func_initialize(
-        FfiConverterOptionString.lower(whisperPath),
         FfiConverterOptionString.lower(llmPath),$0
     )
 }
@@ -1211,20 +1331,18 @@ public func polishRawTextWithContext(rawText: String, style: String, contextBefo
     )
 })
 }
-public func processAudioFile(audioPath: String, style: String)throws  -> String {
+/**
+ * 帶前文脈絡的語意重塑（跳過 Whisper ASR），並支援即時字元串流。
+ * 當 LLM 產出新進度時，會立即呼叫 callback.on_text_update() 傳遞累積字串。
+ * 執行完畢後會回傳完整的排版後字串。
+ */
+public func polishTextStream(rawText: String, style: String, contextBefore: String?, callback: LlmStreamCallback)throws  -> String {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
-    uniffi_echowrite_core_fn_func_process_audio_file(
-        FfiConverterString.lower(audioPath),
-        FfiConverterString.lower(style),$0
-    )
-})
-}
-public func processAudioFileWithContext(audioPath: String, style: String, contextBefore: String?)throws  -> String {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
-    uniffi_echowrite_core_fn_func_process_audio_file_with_context(
-        FfiConverterString.lower(audioPath),
+    uniffi_echowrite_core_fn_func_polish_text_stream(
+        FfiConverterString.lower(rawText),
         FfiConverterString.lower(style),
-        FfiConverterOptionString.lower(contextBefore),$0
+        FfiConverterOptionString.lower(contextBefore),
+        FfiConverterCallbackInterfaceLlmStreamCallback.lower(callback),$0
     )
 })
 }
@@ -1255,26 +1373,6 @@ public func startModelDownload(kind: ModelKind) {try! rustCall() {
         FfiConverterTypeModelKind.lower(kind),$0
     )
 }
-}
-public func startRecording()throws  {try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
-    uniffi_echowrite_core_fn_func_start_recording($0
-    )
-}
-}
-public func stopRecordingAndProcess(style: String)throws  -> String {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
-    uniffi_echowrite_core_fn_func_stop_recording_and_process(
-        FfiConverterString.lower(style),$0
-    )
-})
-}
-public func stopRecordingAndProcessWithContext(style: String, contextBefore: String?)throws  -> String {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeEchoWriteError.lift) {
-    uniffi_echowrite_core_fn_func_stop_recording_and_process_with_context(
-        FfiConverterString.lower(style),
-        FfiConverterOptionString.lower(contextBefore),$0
-    )
-})
 }
 
 private enum InitializationResult {
@@ -1337,7 +1435,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_echowrite_core_checksum_func_import_sync_data() != 58878) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_echowrite_core_checksum_func_initialize() != 43838) {
+    if (uniffi_echowrite_core_checksum_func_initialize() != 36072) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_is_model_ready() != 52597) {
@@ -1349,10 +1447,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_echowrite_core_checksum_func_polish_raw_text_with_context() != 3165) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_echowrite_core_checksum_func_process_audio_file() != 39260) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_echowrite_core_checksum_func_process_audio_file_with_context() != 18449) {
+    if (uniffi_echowrite_core_checksum_func_polish_text_stream() != 57483) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_echowrite_core_checksum_func_set_model_dir() != 36944) {
@@ -1364,16 +1459,14 @@ private var initializationResult: InitializationResult = {
     if (uniffi_echowrite_core_checksum_func_start_model_download() != 33259) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_echowrite_core_checksum_func_start_recording() != 2237) {
+    if (uniffi_echowrite_core_checksum_method_llmstreamcallback_on_text_update() != 57570) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_echowrite_core_checksum_func_stop_recording_and_process() != 58931) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_echowrite_core_checksum_func_stop_recording_and_process_with_context() != 13418) {
+    if (uniffi_echowrite_core_checksum_method_llmstreamcallback_on_error() != 15420) {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitLlmStreamCallback()
     return InitializationResult.ok
 }()
 

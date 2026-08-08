@@ -50,6 +50,21 @@ namespace EchoWrite
         [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
         private static extern void echowrite_free_string(IntPtr ptr);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void OnTextUpdateCallback([MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate void OnErrorCallback([MarshalAs(UnmanagedType.LPUTF8Str)] string error);
+
+        [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr echowrite_polish_text_stream(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string rawText,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string style,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string? contextBefore,
+            OnTextUpdateCallback onText,
+            OnErrorCallback onErr);
+
+
         // 0 = Whisper, 1 = Llm
         [DllImport("echowrite_core.dll", CallingConvention = CallingConvention.Cdecl)]
         private static extern int echowrite_is_model_ready(int kind);
@@ -491,12 +506,16 @@ namespace EchoWrite
 
         private static void SpeechRecognizer_HypothesisGenerated(SpeechContinuousRecognitionSession sender, SpeechRecognitionHypothesisGeneratedEventArgs args)
         {
-            _lastPartialText = args.Hypothesis.Text;
-            if (_trayIcon != null)
+            string text = args.Hypothesis.Text;
+            if (!string.IsNullOrWhiteSpace(text))
             {
-                // 更新托盤提示，模擬動態島的串流顯示
-                string display = _lastPartialText.Length > 20 ? _lastPartialText.Substring(0, 20) + "..." : _lastPartialText;
-                _trayIcon.Text = $"聽寫中: {display}";
+                _lastPartialText = text;
+                if (_trayIcon != null)
+                {
+                    // 更新托盤提示，模擬動態島的串流顯示
+                    string display = _lastPartialText.Length > 20 ? _lastPartialText.Substring(0, 20) + "..." : _lastPartialText;
+                    _trayIcon.Text = $"聽寫中: {display}";
+                }
             }
         }
 
@@ -534,8 +553,17 @@ namespace EchoWrite
                     }
                     else
                     {
-                        // 呼叫 Rust FFI 進行本地純文字 AI 重組
-                        IntPtr textPtr = echowrite_polish_raw_text(rawText, _currentStyle);
+                        // 呼叫 Rust FFI 進行本地純文字 AI 重組 (Streaming)
+                        OnTextUpdateCallback onUpdate = partial => {
+                            if (_trayIcon != null) {
+                                string display = partial.Length > 20 ? partial.Substring(0, 20) + "..." : partial;
+                                _trayIcon.Text = $"處理中: {display}";
+                            }
+                        };
+                        OnErrorCallback onError = err => {
+                            Console.WriteLine("Stream error: " + err);
+                        };
+                        IntPtr textPtr = echowrite_polish_text_stream(rawText, _currentStyle, null, onUpdate, onError);
                         string? resultText = Marshal.PtrToStringUTF8(textPtr);
 
                         if (!string.IsNullOrEmpty(resultText))

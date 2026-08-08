@@ -1,7 +1,5 @@
 uniffi::setup_scaffolding!();
 
-pub mod audio;
-pub mod asr;
 pub mod llm;
 pub mod formatter;
 pub mod database;
@@ -20,37 +18,30 @@ use lazy_static::lazy_static;
 pub enum EchoWriteError {
     #[error("Initialization error: {message}")]
     InitError { message: String },
-    #[error("Recording error: {message}")]
-    RecordError { message: String },
     #[error("Processing error: {message}")]
     ProcessError { message: String },
 }
 
 // 全域狀態管理，便於原生端簡單呼叫
 struct AppState {
-    whisper_model_path: Option<String>,
     llm_model_path: Option<String>,
-    is_recording: bool,
 }
 
 lazy_static! {
     static ref STATE: Mutex<AppState> = Mutex::new(AppState {
-        whisper_model_path: None,
         llm_model_path: None,
-        is_recording: false,
     });
 }
 
-/// 初始化核心。`whisper_path` / `llm_path` 可省略（傳 `None`）：
+/// 初始化核心。`llm_path` 可省略（傳 `None`）：
 /// 省略時會自動嘗試解析本地模型目錄（`~/.echowrite/models`，或
 /// `ECHOWRITE_MODEL_DIR` 指定的共享容器路徑）下是否已有模型檔案。
 /// 若模型尚未下載，初始化仍會成功，但呼叫端須先透過
-/// `start_model_download` 下載完成，否則後續的轉寫/潤飾呼叫會回傳
+/// `start_model_download` 下載完成，否則後續的潤飾呼叫會回傳
 /// `ProcessError`（訊息含 "not ready"）提示尚未就緒。
 #[uniffi::export]
-pub fn initialize(whisper_path: Option<String>, llm_path: Option<String>) -> Result<(), EchoWriteError> {
+pub fn initialize(llm_path: Option<String>) -> Result<(), EchoWriteError> {
     let mut state = STATE.lock().map_err(|e| EchoWriteError::InitError { message: e.to_string() })?;
-    state.whisper_model_path = whisper_path.or_else(|| models::default_model_path(models::ModelKind::Whisper));
     state.llm_model_path = llm_path.or_else(|| models::default_model_path(models::ModelKind::Llm));
     models::sync_model_profile_from_disk();
 
@@ -98,60 +89,7 @@ pub fn get_model_download_progress(kind: models::ModelKind) -> models::ModelProg
     models::get_progress(kind)
 }
 
-#[uniffi::export]
-pub fn start_recording() -> Result<(), EchoWriteError> {
-    let mut state = STATE.lock().map_err(|e| EchoWriteError::RecordError { message: e.to_string() })?;
-    if state.is_recording {
-        return Err(EchoWriteError::RecordError { message: "Already recording".to_string() });
-    }
-    state.is_recording = true;
-    audio::start_audio_capture().map_err(|e| EchoWriteError::RecordError { message: e })?;
-    Ok(())
-}
-
-#[uniffi::export]
-pub fn stop_recording_and_process(style: String) -> Result<String, EchoWriteError> {
-    stop_recording_and_process_with_context(style, None)
-}
-
-#[uniffi::export]
-pub fn stop_recording_and_process_with_context(style: String, context_before: Option<String>) -> Result<String, EchoWriteError> {
-    let (audio_path, whisper_model, llm_model) = {
-        let mut state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
-        if !state.is_recording {
-            return Err(EchoWriteError::ProcessError { message: "Not recording".to_string() });
-        }
-        state.is_recording = false;
-        
-        // 1. 取得錄音音訊檔案路徑
-        let audio_path = audio::stop_audio_capture()
-            .map_err(|e| EchoWriteError::ProcessError { message: e })?;
-        
-        let whisper_model = resolve_model_path(state.whisper_model_path.clone(), models::ModelKind::Whisper)?;
-        let llm_model = resolve_model_path(state.llm_model_path.clone(), models::ModelKind::Llm)?;
-
-        (audio_path, whisper_model, llm_model)
-    }; // 此處 Mutex 鎖自動釋放！
-
-    process_audio_file_internal(audio_path, style, whisper_model, llm_model, context_before)
-}
-
-#[uniffi::export]
-pub fn process_audio_file(audio_path: String, style: String) -> Result<String, EchoWriteError> {
-    process_audio_file_with_context(audio_path, style, None)
-}
-
-#[uniffi::export]
-pub fn process_audio_file_with_context(audio_path: String, style: String, context_before: Option<String>) -> Result<String, EchoWriteError> {
-    let (whisper_model, llm_model) = {
-        let state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
-        let whisper_model = resolve_model_path(state.whisper_model_path.clone(), models::ModelKind::Whisper)?;
-        let llm_model = resolve_model_path(state.llm_model_path.clone(), models::ModelKind::Llm)?;
-        (whisper_model, llm_model)
-    };
-
-    process_audio_file_internal(audio_path, style, whisper_model, llm_model, context_before)
-}
+// Removed audio and recording functions.
 
 /// 優先使用初始化時已解析的路徑；若當時尚未就緒，重新檢查一次
 /// （處理「initialize 時模型還沒下載完，但現在下載完成了」的情況）。
@@ -243,24 +181,66 @@ pub fn get_style_prompt_preview(style: String) -> String {
     llm::get_system_prompt_for_style(&style).to_string()
 }
 
-fn process_audio_file_internal(
-    audio_path: String,
-    style: String,
-    whisper_model: String,
-    llm_model: String,
-    context_before: Option<String>,
-) -> Result<String, EchoWriteError> {
-    // 2. 呼叫本地 ASR 進行語音轉文字 (在鎖外執行)
-    // 自訂詞彙查詢失敗不應阻斷整個轉寫流程，僅降級為不使用引導詞。
-    let custom_vocabulary = database::get_custom_phrases().unwrap_or_default();
-    let raw_text = asr::transcribe(audio_path, &whisper_model, &custom_vocabulary)
-        .map_err(|e| EchoWriteError::ProcessError { message: e })?;
+#[uniffi::export(callback_interface)]
+pub trait LlmStreamCallback: Send + Sync {
+    fn on_text_update(&self, text: String);
+    fn on_error(&self, error: String);
+}
 
+/// 帶前文脈絡的語意重塑（跳過 Whisper ASR），並支援即時字元串流。
+/// 當 LLM 產出新進度時，會立即呼叫 callback.on_text_update() 傳遞累積字串。
+/// 執行完畢後會回傳完整的排版後字串。
+#[uniffi::export]
+pub fn polish_text_stream(
+    raw_text: String,
+    style: String,
+    context_before: Option<String>,
+    callback: Box<dyn LlmStreamCallback>,
+) -> Result<String, EchoWriteError> {
     if raw_text.trim().is_empty() {
         return Ok(String::new());
     }
 
-    polish_text_internal(raw_text, style, llm_model, context_before)
+    // 語音快速編輯指令判斷 (瞬間完成)
+    if let Some(cmd_text) = formatter::handle_voice_editing_command(&raw_text) {
+        let formatted = formatter::format_text(cmd_text);
+        callback.on_text_update(formatted.clone());
+        return Ok(formatted);
+    }
+
+    let tone_samples = database::get_personal_tone_samples().unwrap_or_default();
+    let is_casual = style.is_empty() || style == "casual" || style == "smart";
+    let has_no_context = context_before.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true);
+
+    // 智能極速通道：casual 模式永遠跳過 LLM，純規則引擎處理
+    if is_casual && tone_samples.is_empty() {
+        let formatted = formatter::format_text(raw_text);
+        callback.on_text_update(formatted.clone());
+        return Ok(formatted);
+    }
+
+    let llm_model = {
+        let state = STATE.lock().map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
+        resolve_model_path(state.llm_model_path.clone(), models::ModelKind::Llm)?
+    };
+
+    let _ = has_no_context; // 保留供未來使用
+
+    // 呼叫支援串流的 LLM 實作
+    let polished_text = match llm::polish_text_stream_internal(raw_text.clone(), style, &llm_model, context_before, &tone_samples, callback) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("[EchoWrite Core] LLM 處理警告，平滑降級為規則排版: {}", e);
+            raw_text
+        }
+    };
+
+    let formatted_text = formatter::format_text(polished_text);
+
+    database::save_history(&formatted_text)
+        .map_err(|e| EchoWriteError::ProcessError { message: e.to_string() })?;
+
+    Ok(formatted_text)
 }
 
 /// 直接對已辨識文字進行語意重塑（跳過 Whisper ASR）。

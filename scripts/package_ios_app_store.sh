@@ -45,7 +45,13 @@ BUILD_NUMBER="${BUILD_NUMBER:-1}"
 IOS_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET:-17.0}"
 ASC_PROVIDER_ARGS=()
 if [[ -n "${ASC_PROVIDER:-}" ]]; then
-  ASC_PROVIDER_ARGS=(--provider-public-id "$ASC_PROVIDER")
+  if [[ ${#ASC_PROVIDER} -eq 36 ]]; then
+    # altool has a known bug where --provider-public-id (UUID) fails with "Cannot determine Apple ID".
+    # Using the Team ID (Short Name) with --asc-provider works perfectly.
+    ASC_PROVIDER_ARGS=(--asc-provider "$TEAM_ID")
+  else
+    ASC_PROVIDER_ARGS=(--asc-provider "$ASC_PROVIDER")
+  fi
 fi
 
 cd "$ROOT_DIR"
@@ -70,12 +76,7 @@ echo "=== 3/9 Generating iOS Xcode project ==="
 (cd "$IOS_DIR" && xcodegen generate)
 
 echo "=== 4/9 Preparing version/build metadata ==="
-for plist in "$APP_INFO_PLIST" "$KEYBOARD_INFO_PLIST"; do
-  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$plist" 2>/dev/null || \
-  /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" "$plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$plist" 2>/dev/null || \
-  /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$plist"
-done
+# 版本號將由 xcodebuild 透過 MARKETING_VERSION 與 CURRENT_PROJECT_VERSION 變數動態注入
 
 for entitlements in "$APP_ENTITLEMENTS" "$KEYBOARD_ENTITLEMENTS"; do
   /usr/libexec/PlistBuddy -c "Delete :com.apple.security.application-groups" "$entitlements" 2>/dev/null || true

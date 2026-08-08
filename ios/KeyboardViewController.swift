@@ -8,7 +8,7 @@ import Speech
 /// 3. 動態聲波音量柱與精確錄音計時器。
 /// 4. 5 大語意風格一鍵切換與常用中文標點符號列。
 @objc(KeyboardViewController)
-class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
+class KeyboardViewController: UIInputViewController {
     // MARK: - UI 元件
     private var headerStackView: UIStackView!
     private var brandBadgeLabel: UILabel!
@@ -30,11 +30,13 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
     private var currentStyle: EchoWriteStyle = .casual
     private var heightConstraint: NSLayoutConstraint?
 
-    private var speechRecognizer: SFSpeechRecognizer?
+    // SFSpeechRecognizer Recording State
+    private var speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-TW"))
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
-    private var audioEngine: AVAudioEngine?
-    private var lastPartialText: String = ""   // 保存最後一次 partial result
+    private var audioEngine = AVAudioEngine()
+    
+    private var lastPartialText: String = ""
     private var recordingTimer: Timer?
     private var deleteRepeatTimer: Timer?
     private var recordingStartTime: Date?
@@ -264,12 +266,8 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
         btn.backgroundColor = UIColor(white: 0.22, alpha: 0.85)
         btn.layer.cornerRadius = 8
         btn.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        btn.addTarget(self, action: #selector(deleteKeyTapped), for: .touchUpInside)
-
-        // 支援長按連續刪除 (Continuous Delete on Long Press)
-        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleDeleteKeyLongPress(_:)))
-        longPress.minimumPressDuration = 0.28
-        btn.addGestureRecognizer(longPress)
+        btn.addTarget(self, action: #selector(deleteTouchDown), for: .touchDown)
+        btn.addTarget(self, action: #selector(deleteTouchUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
 
         return btn
     }
@@ -298,29 +296,28 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    @objc private func deleteKeyTapped() {
+    @objc private func deleteTouchDown() {
         textDocumentProxy.deleteBackward()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-    }
-
-    @objc private func handleDeleteKeyLongPress(_ gesture: UILongPressGestureRecognizer) {
-        switch gesture.state {
-        case .began:
-            textDocumentProxy.deleteBackward()
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-
-            deleteRepeatTimer?.invalidate()
-            deleteRepeatTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
-                guard let self = self else { return }
-                self.textDocumentProxy.deleteBackward()
+        
+        deleteRepeatTimer?.invalidate()
+        let delayTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            self.deleteRepeatTimer?.invalidate()
+            let repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+                self?.textDocumentProxy.deleteBackward()
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
-        case .ended, .cancelled, .failed:
-            deleteRepeatTimer?.invalidate()
-            deleteRepeatTimer = nil
-        default:
-            break
+            RunLoop.current.add(repeatTimer, forMode: .common)
+            self.deleteRepeatTimer = repeatTimer
         }
+        RunLoop.current.add(delayTimer, forMode: .common)
+        deleteRepeatTimer = delayTimer
+    }
+
+    @objc private func deleteTouchUp() {
+        deleteRepeatTimer?.invalidate()
+        deleteRepeatTimer = nil
     }
 
     @objc private func returnKeyTapped() {
@@ -367,251 +364,174 @@ class KeyboardViewController: UIInputViewController, AVAudioRecorderDelegate {
         }
     }
 
-    // MARK: - 串流語音辨識核心 (SFSpeechRecognizer Lightning ASR)
-
     private func startInPlaceRecording() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
-        // 先檢查語音辨識授權狀態
-        let authStatus = SFSpeechRecognizer.authorizationStatus()
-        switch authStatus {
-        case .notDetermined:
-            SFSpeechRecognizer.requestAuthorization { [weak self] status in
-                DispatchQueue.main.async {
-                    if status == .authorized {
-                        self?.beginStreamingRecognition()
-                    } else {
-                        self?.previewTextLabel.text = "⚠️ 請在設定 › EchoWrite 中允許語音辨識以啟用閃電模式"
-                        self?.previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
-                    }
-                }
-            }
-            return
-        case .denied, .restricted:
-            previewTextLabel.text = "⚠️ 語音辨識未授權，請至設定 › 隱私 › 語音辨識 › EchoWrite 中開啟"
-            previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
-            return
-        case .authorized:
-            beginStreamingRecognition()
-        @unknown default:
-            beginStreamingRecognition()
-        }
-    }
-
-    private func beginStreamingRecognition() {
-        // 建立辨識器（優先 zh-TW，備援 zh）
-        speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-TW"))
-            ?? SFSpeechRecognizer(locale: Locale(identifier: "zh"))
-        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-            previewTextLabel.text = "⚠️ 語音辨識器目前不可用，請稍後重試"
-            previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
+        if audioEngine.isRunning {
+            audioEngine.stop()
+            recognitionRequest?.endAudio()
             return
         }
-
-        // 設定 AVAudioSession
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.record, mode: .measurement, options: [.allowBluetooth, .mixWithOthers])
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            previewTextLabel.text = "⚠️ 麥克風無法啟用：請至 iOS 設定 › EchoWrite › 允許完整取用"
-            previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
-            return
-        }
-
-        // 建立辨識請求（串流模式）
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        // 優先使用機上辨識（Apple Neural Engine），不需網路
-        if recognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
-        recognitionRequest = request
-
-        // 建立音訊引擎並掛接 tap
-        let engine = AVAudioEngine()
-        audioEngine = engine
-        let inputNode = engine.inputNode
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
-            self?.recognitionRequest?.append(buffer)
-        }
-
-        do {
-            engine.prepare()
-            try engine.start()
-        } catch {
-            previewTextLabel.text = "⚠️ 音訊引擎啟動失敗：\(error.localizedDescription)"
-            previewTextLabel.textColor = UIColor(red: 1.0, green: 0.4, blue: 0.3, alpha: 1.0)
-            stopAudioEngine()
-            return
-        }
-
-        // 啟動辨識任務（串流 partial results → setMarkedText 即時顯示）
+        
         lastPartialText = ""
-        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let self = self else { return }
-
-            if let result = result {
-                let text = result.bestTranscription.formattedString
-                self.lastPartialText = text
-                DispatchQueue.main.async {
-                    // 邊說邊顯示辨識結果（草稿，帶底線）
-                    self.textDocumentProxy.setMarkedText(text, selectedRange: NSRange(location: text.count, length: 0))
-                    self.previewTextLabel.text = "🎙️ \(text)"
-                    self.previewTextLabel.textColor = UIColor(white: 0.9, alpha: 1.0)
-                    // 即時更新聲波（用字數變化模擬振幅）
-                    self.waveformView.updateAmplitude(CGFloat.random(in: 0.3...0.9))
-                }
-            }
-
-            if let error = error {
-                // 使用者主動停止時 error 屬正常，不顯示錯誤
-                let nsError = error as NSError
-                let isExpectedStop = nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110
-                if !isExpectedStop {
-                    print("[Keyboard] SFSpeech recognition error: \(error)")
-                }
-            }
+        do {
+            try startSpeechRecognition()
+        } catch {
+            previewTextLabel.text = "⚠️ 語音辨識啟動失敗"
+            return
         }
 
         isRecording = true
         recordingStartTime = Date()
 
-        // 更新 UI
-        recordButton.setTitle("⏹️ 說完即點擊完成", for: .normal)
-        recordButton.backgroundColor = UIColor(red: 0.85, green: 0.2, blue: 0.25, alpha: 1.0)
-        recordButton.layer.shadowColor = UIColor(red: 1.0, green: 0.2, blue: 0.3, alpha: 0.8).cgColor
-        statusLabel.text = "⚡ 說完即點擊，毫秒級打入文字"
+        DispatchQueue.main.async {
+            self.previewTextLabel.text = "🎙️ 錄音中，即時語音辨識..."
+            self.recordButton.setTitle("⏹️ 完成", for: .normal)
+            self.recordButton.backgroundColor = .systemRed
+        }
 
-        // 啟動計時器
         recordingTimer?.invalidate()
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.06, repeats: true) { [weak self] _ in
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self = self, self.isRecording, let start = self.recordingStartTime else { return }
             let elapsed = Int(Date().timeIntervalSince(start))
             self.timerLabel.text = String(format: "⏱ %02d:%02d", elapsed / 60, elapsed % 60)
         }
     }
 
-    private func stopAndProcessInPlaceRecording() {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-
-        recordingTimer?.invalidate()
-        recordingTimer = nil
-        guard isRecording else { return }
-        isRecording = false
-        isProcessing = true
-
-        // 停止音訊引擎並結束辨識請求
-        recognitionRequest?.endAudio()
-        stopAudioEngine()
+    private func startSpeechRecognition() throws {
         recognitionTask?.cancel()
         recognitionTask = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-
-        // 取得最後辨識文字（可能來自 partial 或 final）
-        let rawText = lastPartialText.trimmingCharacters(in: .whitespacesAndNewlines)
-        lastPartialText = ""
-
-        // 清除草稿底線
-        textDocumentProxy.unmarkText()
-
-        guard !rawText.isEmpty else {
-            previewTextLabel.text = "⚠️ 未偵測到語音，請靠近麥克風再試"
-            previewTextLabel.textColor = UIColor(red: 1.0, green: 0.65, blue: 0.2, alpha: 1.0)
-            isProcessing = false
-            waveformView.reset()
-            resetButtonUI()
-            UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            return
+        
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
+        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        guard let recognitionRequest = recognitionRequest else { fatalError("Unable to create request") }
+        recognitionRequest.shouldReportPartialResults = true
+        
+        let inputNode = audioEngine.inputNode
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] (buffer, when) in
+            guard let self = self else { return }
+            self.recognitionRequest?.append(buffer)
+            
+            // Calculate RMS for waveform
+            guard let channelData = buffer.floatChannelData?[0] else { return }
+            let frames = buffer.frameLength
+            var rms: Float = 0
+            for i in 0..<Int(frames) {
+                rms += channelData[i] * channelData[i]
+            }
+            rms = sqrt(rms / Float(frames))
+            let normalized = CGFloat(max(0.1, min(1.0, 1.0 + Double(20 * log10(rms)) / 50.0)))
+            DispatchQueue.main.async {
+                self.waveformView.updateAmplitude(normalized)
+            }
         }
-
-        let styleStr = currentStyle.rawValue
-        let contextBefore = textDocumentProxy.documentContextBeforeInput
-        let isCasual = currentStyle == .casual
-
-        if isCasual {
-            // ⚡ 極速通道：純規則引擎，< 10ms，不呼叫 LLM
-            let formatted = ewFormatOnly(text: rawText)
-            textDocumentProxy.insertText(formatted)
-            previewTextLabel.text = "✅ 已打入：\(formatted.prefix(28))"
-            previewTextLabel.textColor = UIColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1.0)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            isProcessing = false
-            waveformView.reset()
-            resetButtonUI()
-        } else {
-            // 🌊 非 casual：先立刻插入原始格式化文字，再非同步 LLM 精修替換
-            let quickFormatted = ewFormatOnly(text: rawText)
-            textDocumentProxy.insertText(quickFormatted)
-            previewTextLabel.text = "⚙️ 精修中（\(currentStyle.title)）..."
-            previewTextLabel.textColor = UIColor(red: 0.8, green: 0.7, blue: 1.0, alpha: 1.0)
-            recordButton.isEnabled = false
-            recordButton.setTitle("⚙️ LLM 語意精修中...", for: .normal)
-            recordButton.backgroundColor = UIColor(red: 0.35, green: 0.18, blue: 0.7, alpha: 1.0)
-
-            let insertedLen = quickFormatted.count
-
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                guard let self = self else { return }
-                var polished: String? = nil
-                do {
-                    polished = try ewPolishRawTextWithContext(
-                        rawText: rawText,
-                        style: styleStr,
-                        contextBefore: contextBefore
-                    )
-                } catch {
-                    print("[Keyboard] polishRawText error: \(error)")
+        
+        audioEngine.prepare()
+        try audioEngine.start()
+        
+        recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+            guard let self = self else { return }
+            if let result = result {
+                self.lastPartialText = result.bestTranscription.formattedString
+                if self.isRecording {
+                    self.previewTextLabel.text = self.lastPartialText
                 }
-
-                DispatchQueue.main.async {
-                    self.isProcessing = false
-                    self.waveformView.reset()
-                    self.resetButtonUI()
-
-                    if let refined = polished, !refined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                       refined != quickFormatted {
-                        // 用精修後版本替換剛插入的快速格式版本
-                        for _ in 0..<insertedLen {
-                            self.textDocumentProxy.deleteBackward()
-                        }
-                        self.textDocumentProxy.insertText(refined)
-                        self.previewTextLabel.text = "✅ 已精修打入：\(refined.prefix(24))"
-                        self.previewTextLabel.textColor = UIColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1.0)
-                    } else {
-                        self.previewTextLabel.text = "✅ 已打入（快速模式）：\(quickFormatted.prefix(20))"
-                        self.previewTextLabel.textColor = UIColor(red: 0.3, green: 0.9, blue: 0.4, alpha: 1.0)
-                    }
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                
+                if result.isFinal {
+                    self.processAI(self.lastPartialText)
                 }
+            }
+            if error != nil {
+                self.audioEngine.stop()
+                inputNode.removeTap(onBus: 0)
+                self.recognitionRequest = nil
+                self.recognitionTask = nil
             }
         }
     }
+    private func stopAndProcessInPlaceRecording() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        recordingTimer?.invalidate()
+        
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        recognitionRequest?.endAudio() 
+        
+        isRecording = false
+        isProcessing = true
+        
+        previewTextLabel.text = "⚙️ LLM 語意精修串流中..."
+        recordButton.isEnabled = false
+        recordButton.setTitle("⚙️ 引擎處理中...", for: .normal)
+    }
 
+    private func processAI(_ rawText: String) {
+        if rawText.isEmpty {
+            DispatchQueue.main.async {
+                self.previewTextLabel.text = "⚠️ 未聽清楚內容，或轉寫失敗"
+                self.isProcessing = false
+                self.resetButtonUI()
+            }
+            return
+        }
+
+        let contextBefore = self.textDocumentProxy.documentContextBeforeInput ?? ""
+        let currentStyleRaw = self.currentStyle.rawValue
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let callback = StreamingCallback(
+                onUpdate: { [weak self] text in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        if self.isProcessing {
+                            self.previewTextLabel.text = text
+                        }
+                    }
+                },
+                onError: { error in
+                    print("Stream error: \(error)")
+                }
+            )
+            
+            let finalText = try? echowritePolishTextStream(rawText: rawText, style: currentStyleRaw, contextBefore: contextBefore, callback: callback)
+            
+            DispatchQueue.main.async {
+                if self.isProcessing {
+                    if let text = finalText {
+                        self.textDocumentProxy.insertText(text)
+                        self.previewTextLabel.text = "✅ 處理完成"
+                    } else {
+                        self.previewTextLabel.text = "⚠️ 轉寫失敗"
+                    }
+                }
+                self.isProcessing = false
+                self.resetButtonUI()
+            }
+        }
+    }
     private func cancelRecording() {
         recordingTimer?.invalidate()
         recordingTimer = nil
+        
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
-        stopAudioEngine()
         recognitionTask?.cancel()
-        recognitionTask = nil
+        
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        
         isRecording = false
         isProcessing = false
-        lastPartialText = ""
-        textDocumentProxy.unmarkText()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         waveformView.reset()
         resetButtonUI()
-        previewTextLabel.text = "已取消錄音"
-    }
-
-    private func stopAudioEngine() {
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
-        recognitionRequest = nil
+        
+        previewTextLabel.text = "⚠️ 已取消錄音"
     }
 
     private func resetButtonUI() {
@@ -679,5 +599,22 @@ final class AudioWaveformView: UIView {
 
     func reset() {
         layoutSubviews()
+    }
+}
+
+class StreamingCallback: LlmStreamCallback {
+    let onUpdate: (String) -> Void
+    let onErrorCb: (String) -> Void
+    
+    init(onUpdate: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+        self.onUpdate = onUpdate
+        self.onErrorCb = onError
+    }
+    
+    func onTextUpdate(text: String) {
+        self.onUpdate(text)
+    }
+    func onError(error: String) {
+        self.onErrorCb(error)
     }
 }

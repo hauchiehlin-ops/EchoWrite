@@ -135,3 +135,48 @@ func ewPolishRawText(rawText: String, style: String) throws -> String {
     defer { c_echowrite_free_string(ptr) }
     return String(cString: ptr)
 }
+
+@_silgen_name("echowrite_polish_text_stream")
+private func c_echowrite_polish_text_stream(
+    _ rawText: UnsafePointer<CChar>,
+    _ style: UnsafePointer<CChar>,
+    _ contextBefore: UnsafePointer<CChar>?,
+    _ onText: @convention(c) (UnsafePointer<CChar>) -> Void,
+    _ onErr: @convention(c) (UnsafePointer<CChar>) -> Void
+) -> UnsafeMutablePointer<CChar>?
+
+class StreamManager {
+    static var onUpdate: ((String) -> Void)? = nil
+    static var onErrorCb: ((String) -> Void)? = nil
+}
+
+private func cOnTextUpdate(_ textPtr: UnsafePointer<CChar>) {
+    let text = String(cString: textPtr)
+    StreamManager.onUpdate?(text)
+}
+private func cOnError(_ errorPtr: UnsafePointer<CChar>) {
+    let error = String(cString: errorPtr)
+    StreamManager.onErrorCb?(error)
+}
+
+func ewPolishTextStream(rawText: String, style: String, contextBefore: String?, onUpdate: @escaping (String) -> Void, onError: @escaping (String) -> Void) throws -> String {
+    StreamManager.onUpdate = onUpdate
+    StreamManager.onErrorCb = onError
+    
+    let ptr = rawText.withCString { raw in
+        style.withCString { styleString in
+            if let ctx = contextBefore, !ctx.isEmpty {
+                return ctx.withCString { ctxString in
+                    c_echowrite_polish_text_stream(raw, styleString, ctxString, cOnTextUpdate, cOnError)
+                }
+            } else {
+                return c_echowrite_polish_text_stream(raw, styleString, nil, cOnTextUpdate, cOnError)
+            }
+        }
+    }
+    StreamManager.onUpdate = nil
+    StreamManager.onErrorCb = nil
+    guard let ptr else { return "" }
+    defer { c_echowrite_free_string(ptr) }
+    return String(cString: ptr)
+}

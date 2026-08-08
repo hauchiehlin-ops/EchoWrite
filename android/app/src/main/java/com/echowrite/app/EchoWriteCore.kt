@@ -70,13 +70,19 @@ object EchoWriteCore {
 
     // 原生 JNI 宣告
     @JvmStatic external fun setModelDir(dirPath: String): Boolean
-    @JvmStatic external fun initialize(whisperPath: String, llmPath: String): Boolean
+    @JvmStatic external fun initialize(llmPath: String): Boolean
     @JvmStatic external fun isModelReady(kind: Int): Boolean
     @JvmStatic external fun startModelDownload(kind: Int)
     /** 回傳格式：`"state:downloaded:total"` */
     @JvmStatic external fun getModelDownloadProgress(kind: Int): String
-    @JvmStatic external fun processAudioFile(audioPath: String, style: String): String
-    @JvmStatic external fun processAudioFileWithContext(audioPath: String, style: String, contextBefore: String): String
+    
+    interface LlmStreamCallback {
+        fun onTextUpdate(text: String)
+        fun onError(error: String)
+    }
+
+    @JvmStatic external fun polishTextStream(rawText: String, style: String, contextBefore: String, callback: LlmStreamCallback): String
+    
     @JvmStatic external fun polishRawText(rawText: String, style: String): String
     @JvmStatic external fun polishRawTextWithContext(rawText: String, style: String, contextBefore: String): String
     @JvmStatic external fun formatOnly(text: String): String

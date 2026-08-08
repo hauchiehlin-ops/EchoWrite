@@ -130,6 +130,41 @@ struct ModelHubView: View {
                     .padding()
                     .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
 
+                    // Groq API Key Settings
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("🔑 免費極速雲端架構 (Groq)")
+                            .font(.headline)
+                        Text("為維持專案零成本且速度最快，您可以免費申請 Groq API Key。\n設定後將瞬間處理文字，無延遲；若不設定或斷網，將自動使用下方的本地模型備援。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        TextField("請輸入 gsk_ 開頭的 API Key", text: Binding(
+                            get: {
+                                guard let dir = EchoWriteShared.sharedModelsDirURL else { return "" }
+                                let fileURL = dir.appendingPathComponent("groq_api_key.txt")
+                                return (try? String(contentsOf: fileURL, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                            },
+                            set: { newValue in
+                                guard let dir = EchoWriteShared.sharedModelsDirURL else { return }
+                                let fileURL = dir.appendingPathComponent("groq_api_key.txt")
+                                try? newValue.trimmingCharacters(in: .whitespacesAndNewlines).write(to: fileURL, atomically: true, encoding: .utf8)
+                            }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        
+                        Button("點此前往申請免費 Groq API Key") {
+                            if let url = URL(string: "https://console.groq.com/keys") {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                        .font(.caption.bold())
+                        .buttonStyle(.borderless)
+                    }
+                    .padding()
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+
                     // 模型下載狀態卡片
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {

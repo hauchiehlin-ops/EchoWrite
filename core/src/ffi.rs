@@ -1,7 +1,7 @@
 use crate::models::ModelKind;
 use crate::{
     add_custom_vocabulary, get_custom_vocabulary, get_model_download_progress, initialize, is_model_ready,
-    process_audio_file, start_model_download, start_recording, stop_recording_and_process,
+    start_model_download,
 };
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
@@ -44,11 +44,10 @@ pub extern "C" fn echowrite_set_model_dir(dir_path: *const c_char) -> c_int {
 }
 
 #[no_mangle]
-pub extern "C" fn echowrite_initialize(whisper_path: *const c_char, llm_path: *const c_char) -> c_int {
-    let whisper_path = opt_str_from_ptr(whisper_path);
+pub extern "C" fn echowrite_initialize(llm_path: *const c_char) -> c_int {
     let llm_path = opt_str_from_ptr(llm_path);
 
-    match initialize(whisper_path, llm_path) {
+    match initialize(llm_path) {
         Ok(_) => 0,
         Err(_) => 3,
     }
@@ -108,43 +107,7 @@ pub extern "C" fn echowrite_get_model_download_progress(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn echowrite_start_recording() -> c_int {
-    match start_recording() {
-        Ok(_) => 0,
-        Err(_) => 1,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn echowrite_stop_recording_and_process(style: *const c_char) -> *mut c_char {
-    let style = match str_from_ptr(style) {
-        Ok(v) => v,
-        Err(_) => return into_raw_c_string(String::new()),
-    };
-
-    match stop_recording_and_process(style) {
-        Ok(text) => into_raw_c_string(text),
-        Err(_) => into_raw_c_string(String::new()),
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn echowrite_process_audio_file(audio_path: *const c_char, style: *const c_char) -> *mut c_char {
-    let audio_path = match str_from_ptr(audio_path) {
-        Ok(v) => v,
-        Err(_) => return into_raw_c_string(String::new()),
-    };
-    let style = match str_from_ptr(style) {
-        Ok(v) => v,
-        Err(_) => return into_raw_c_string(String::new()),
-    };
-
-    match process_audio_file(audio_path, style) {
-        Ok(text) => into_raw_c_string(text),
-        Err(_) => into_raw_c_string(String::new()),
-    }
-}
+// Removed audio recording C-APIs
 
 /// 新增一個自訂詞彙（人名/產品名等）。回傳 0 = 成功。
 #[no_mangle]
@@ -218,13 +181,33 @@ pub extern "C" fn echowrite_clear_transcription_history() -> c_int {
     }
 }
 
+// Removed process_audio_file_with_context
+
+struct CCallbackWrapper {
+    on_text: extern "C" fn(*const c_char),
+    on_err: extern "C" fn(*const c_char),
+}
+
+impl crate::LlmStreamCallback for CCallbackWrapper {
+    fn on_text_update(&self, text: String) {
+        let c_str = CString::new(text).unwrap();
+        (self.on_text)(c_str.as_ptr());
+    }
+    fn on_error(&self, error: String) {
+        let c_str = CString::new(error).unwrap();
+        (self.on_err)(c_str.as_ptr());
+    }
+}
+
 #[no_mangle]
-pub extern "C" fn echowrite_process_audio_file_with_context(
-    audio_path: *const c_char,
+pub extern "C" fn echowrite_polish_text_stream(
+    raw_text: *const c_char,
     style: *const c_char,
     context_before: *const c_char,
+    on_text: extern "C" fn(*const c_char),
+    on_err: extern "C" fn(*const c_char),
 ) -> *mut c_char {
-    let audio_path = match str_from_ptr(audio_path) {
+    let raw_text = match str_from_ptr(raw_text) {
         Ok(v) => v,
         Err(_) => return into_raw_c_string(String::new()),
     };
@@ -234,7 +217,8 @@ pub extern "C" fn echowrite_process_audio_file_with_context(
     };
     let context_before = opt_str_from_ptr(context_before);
 
-    match crate::process_audio_file_with_context(audio_path, style, context_before) {
+    let wrapper = Box::new(CCallbackWrapper { on_text, on_err });
+    match crate::polish_text_stream(raw_text, style, context_before, wrapper) {
         Ok(text) => into_raw_c_string(text),
         Err(_) => into_raw_c_string(String::new()),
     }

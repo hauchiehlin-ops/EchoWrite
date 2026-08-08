@@ -168,6 +168,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        menu.addItem(NSMenuItem(title: "🔑 設定 Groq API Key (極速模式)...", action: #selector(showApiKeySettings), keyEquivalent: "k"))
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "📖 簡易操作指南 (⌘+Shift+E)...", action: #selector(showQuickGuideClicked), keyEquivalent: "g"))
         menu.addItem(NSMenuItem(title: "🔒 零雲端隱私權政策...", action: #selector(showPrivacyPolicyClicked), keyEquivalent: "p"))
 
@@ -230,6 +232,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
     
+    @objc func showApiKeySettings() {
+        let alert = NSAlert()
+        alert.messageText = "設定 Groq API Key (免費極速模式)"
+        alert.informativeText = "為維持專案零成本且速度最快，您可以免費申請 Groq API Key。\n設定後，EchoWrite 將瞬間處理文字，無延遲。\n若不設定或斷網，系統將自動使用本機的離線模型作為備援。"
+        
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 350, height: 60))
+        
+        let inputTextField = NSTextField(frame: NSRect(x: 0, y: 30, width: 350, height: 24))
+        inputTextField.placeholderString = "請輸入 gsk_ 開頭的 API Key"
+        
+        let keyPath = NSHomeDirectory() + "/.echowrite/groq_api_key.txt"
+        if let existingKey = try? String(contentsOfFile: keyPath, encoding: .utf8) {
+            inputTextField.stringValue = existingKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        accessoryView.addSubview(inputTextField)
+        
+        let linkButton = NSButton(title: "點此前往申請免費 Groq API Key", target: self, action: #selector(openGroqConsole))
+        linkButton.bezelStyle = .link
+        linkButton.frame = NSRect(x: 0, y: 0, width: 350, height: 24)
+        accessoryView.addSubview(linkButton)
+        
+        alert.accessoryView = accessoryView
+        
+        alert.addButton(withTitle: "儲存")
+        alert.addButton(withTitle: "取消")
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            let newKey = inputTextField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let dirPath = NSHomeDirectory() + "/.echowrite"
+            try? FileManager.default.createDirectory(atPath: dirPath, withIntermediateDirectories: true, attributes: nil)
+            try? newKey.write(toFile: keyPath, atomically: true, encoding: .utf8)
+            print("EchoWrite: Groq API Key updated.")
+        }
+    }
+
+    @objc func openGroqConsole() {
+        if let url = URL(string: "https://console.groq.com/keys") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     func toggleRecording() {
         guard ensureAccessibilityPermission(prompt: true) else {
             return
@@ -350,10 +393,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { result, error in
             if let result = result {
-                self.lastPartialText = result.bestTranscription.formattedString
-                // 動態更新靈動島顯示
-                DispatchQueue.main.async {
-                    self.dynamicIslandController?.setPartialPreview(text: self.lastPartialText)
+                let text = result.bestTranscription.formattedString
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.lastPartialText = text
+                    // 動態更新靈動島顯示
+                    DispatchQueue.main.async {
+                        self.dynamicIslandController?.setPartialPreview(text: self.lastPartialText)
+                    }
                 }
             }
             if error != nil || result?.isFinal == true {
@@ -432,7 +478,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     // TODO: 呼叫 ewPolishRawText(rawText: rawText, style: styleStr)
                     // 由於 C-FFI 還沒新增 polish_raw_text，我們先 mock 或是我們待會去 ffi.rs 補上。
                     // 為了這個提交順利，我們先放個佔位，待會立即去補上 ffi.rs！
-                    let resultText = try ewPolishRawText(rawText: rawText, style: styleStr)
+                    let resultText = try ewPolishTextStream(rawText: rawText, style: styleStr, contextBefore: nil, onUpdate: { partial in
+                        DispatchQueue.main.async {
+                            self.dynamicIslandController?.setCompleted(preview: partial)
+                        }
+                    }, onError: { err in 
+                        print("EchoWrite Stream Error: \(err)")
+                    })
                     
                     DispatchQueue.main.async {
                         if !resultText.isEmpty {

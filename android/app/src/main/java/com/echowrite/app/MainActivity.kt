@@ -53,7 +53,7 @@ class MainActivity : AppCompatActivity() {
         try {
             if (EchoWriteCore.isLibraryLoaded) {
                 EchoWriteCore.setModelDir(modelsDir.absolutePath)
-                EchoWriteCore.initialize("", "")
+                EchoWriteCore.initialize("")
                 EchoWriteCore.setSavedModelProfile(this, EchoWriteCore.getSavedModelProfile(this))
             } else {
                 Toast.makeText(this, "EchoWrite 核心庫初始化中，請稍候...", Toast.LENGTH_SHORT).show()
@@ -179,22 +179,9 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(profileCard)
 
-        val whisperTarget = if (currentProfile == ModelProfile.PRO) "ggml-small-q5_1.bin" else "ggml-base-q5_1.bin"
-        val whisperSize = if (currentProfile == ModelProfile.PRO) "~320 MB" else "~57 MB"
-        val whisperTitle = if (currentProfile == ModelProfile.PRO) "🎙️ 本地語音辨識 (Whisper Small 旗艦)" else "🎙️ 本地語音辨識 (Whisper Base 極速)"
-
         val llmTarget = if (currentProfile == ModelProfile.PRO) "qwen2.5-1.5b-instruct-q4_k_m.gguf" else "qwen2.5-0.5b-instruct-q5_k_m.gguf"
         val llmSize = if (currentProfile == ModelProfile.PRO) "~986 MB" else "~498 MB"
         val llmTitle = if (currentProfile == ModelProfile.PRO) "🧠 本地語意重塑 (Qwen 1.5B 旗艦)" else "🧠 本地語意重塑 (Qwen 0.5B 極速)"
-
-        // 模型 1：Whisper ASR
-        layout.addView(createModelCard(
-            kind = EchoWriteCore.MODEL_KIND_WHISPER,
-            title = whisperTitle,
-            description = "將語音訊號離線轉換為繁體中文草稿，具備台灣術語與俚語強化。",
-            targetFile = whisperTarget,
-            approxSize = whisperSize
-        ))
 
         // 模型 2：Qwen SLM
         layout.addView(createModelCard(
@@ -204,6 +191,70 @@ class MainActivity : AppCompatActivity() {
             targetFile = llmTarget,
             approxSize = llmSize
         ))
+        
+        // --- 雲端極速架構 ---
+        val groqCard = createCardLayout()
+        val groqTitle = TextView(this).apply {
+            text = "🔑 免費極速雲端架構 (Groq)"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val groqDesc = TextView(this).apply {
+            text = "為維持專案零成本且速度最快，您可以免費申請 Groq API Key。設定後將瞬間處理文字，無延遲；若不設定或斷網，將自動使用下方的本地模型備援。"
+            textSize = 12f
+            setTextColor(Color.parseColor("#8F9FB8"))
+            setPadding(0, 4, 0, 12)
+        }
+        groqCard.addView(groqTitle)
+        groqCard.addView(groqDesc)
+
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 12, 0, 12)
+        }
+        
+        val sharedPrefs = getSharedPreferences("echowrite_prefs", Context.MODE_PRIVATE)
+        val editKey = EditText(this).apply {
+            hint = "請輸入 gsk_ 開頭的 API Key"
+            setHintTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setText(sharedPrefs.getString("groq_api_key", ""))
+        }
+        
+        editKey.addTextChangedListener(object: android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val apiKey = s?.toString()?.trim() ?: ""
+                sharedPrefs.edit().putString("groq_api_key", apiKey).apply()
+                try {
+                    val modelDir = File(filesDir, "models")
+                    if (!modelDir.exists()) modelDir.mkdirs()
+                    File(modelDir, "groq_api_key.txt").writeText(apiKey)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        })
+        
+        val getBtn = Button(this).apply {
+            text = "免費申請"
+            textSize = 12f
+            setBackgroundResource(R.drawable.record_btn_bg)
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://console.groq.com/keys")))
+            }
+        }
+        
+        inputRow.addView(editKey)
+        inputRow.addView(getBtn)
+        groqCard.addView(inputRow)
+        layout.addView(groqCard)
 
         container.addView(scroll)
         startDownloadProgressPolling()
@@ -282,12 +333,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun startDownloadProgressPolling() {
         stopPolling()
-        updateModelProgress(EchoWriteCore.MODEL_KIND_WHISPER)
-        updateModelProgress(EchoWriteCore.MODEL_KIND_LLM)
+                updateModelProgress(EchoWriteCore.MODEL_KIND_LLM)
         downloadPoller = object : Runnable {
             override fun run() {
-                updateModelProgress(EchoWriteCore.MODEL_KIND_WHISPER)
-                updateModelProgress(EchoWriteCore.MODEL_KIND_LLM)
+                                updateModelProgress(EchoWriteCore.MODEL_KIND_LLM)
                 mainHandler.postDelayed(this, 300)
             }
         }
