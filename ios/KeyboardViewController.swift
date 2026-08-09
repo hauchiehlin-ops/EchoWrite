@@ -9,6 +9,26 @@ import Speech
 /// 4. 5 大語意風格一鍵切換與常用中文標點符號列。
 @objc(KeyboardViewController)
 class KeyboardViewController: UIInputViewController {
+    private enum RecordingStartError: LocalizedError {
+        case microphonePermissionDenied
+        case speechPermissionDenied
+        case speechRecognizerUnavailable
+        case audioSessionInitializationFailed(underlying: Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .microphonePermissionDenied:
+                return "麥克風沒權限，請到 iOS 設定開啟 EchoWrite 的麥克風權限"
+            case .speechPermissionDenied:
+                return "語音辨識沒權限，請到 iOS 設定開啟 EchoWrite 的語音辨識權限"
+            case .speechRecognizerUnavailable:
+                return "SFSpeechRecognizer 不可用，請稍後再試"
+            case .audioSessionInitializationFailed(let underlying):
+                return "AVAudioSession 初始化失敗：\(underlying.localizedDescription)"
+            }
+        }
+    }
+
     // MARK: - UI 元件
     private var headerStackView: UIStackView!
     private var brandBadgeLabel: UILabel!
@@ -374,10 +394,14 @@ class KeyboardViewController: UIInputViewController {
         }
         
         lastPartialText = ""
+        requestPermissionsAndStartSpeechRecognition()
+    }
+
+    private func beginRecordingSession() {
         do {
             try startSpeechRecognition()
         } catch {
-            previewTextLabel.text = "⚠️ 語音辨識啟動失敗"
+            showRecordingStartFailure("⚠️ \(userFacingRecordingErrorMessage(error))")
             return
         }
 
@@ -398,13 +422,110 @@ class KeyboardViewController: UIInputViewController {
         }
     }
 
+    private func requestPermissionsAndStartSpeechRecognition() {
+        let audioSession = AVAudioSession.sharedInstance()
+
+        switch audioSession.recordPermission {
+        case .granted:
+            requestSpeechAuthorizationIfNeededThenStart()
+        case .denied:
+            showRecordingStartFailure("⚠️ \(RecordingStartError.microphonePermissionDenied.localizedDescription)")
+        case .undetermined:
+            audioSession.requestRecordPermission { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if granted {
+                        self.requestSpeechAuthorizationIfNeededThenStart()
+                    } else {
+                        self.showRecordingStartFailure("⚠️ \(RecordingStartError.microphonePermissionDenied.localizedDescription)")
+                    }
+                }
+            }
+        @unknown default:
+            showRecordingStartFailure("⚠️ 無法確認麥克風權限狀態")
+        }
+    }
+
+    private func requestSpeechAuthorizationIfNeededThenStart() {
+        guard let speechRecognizer = speechRecognizer else {
+            showRecordingStartFailure("⚠️ \(RecordingStartError.speechRecognizerUnavailable.localizedDescription)")
+            return
+        }
+
+        guard speechRecognizer.isAvailable else {
+            showRecordingStartFailure("⚠️ \(RecordingStartError.speechRecognizerUnavailable.localizedDescription)")
+            return
+        }
+
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            beginRecordingSession()
+        case .denied:
+            showRecordingStartFailure("⚠️ \(RecordingStartError.speechPermissionDenied.localizedDescription)")
+        case .restricted:
+            showRecordingStartFailure("⚠️ \(RecordingStartError.speechRecognizerUnavailable.localizedDescription)")
+        case .notDetermined:
+            SFSpeechRecognizer.requestAuthorization { [weak self] status in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    switch status {
+                    case .authorized:
+                        self.beginRecordingSession()
+                    case .denied:
+                        self.showRecordingStartFailure("⚠️ \(RecordingStartError.speechPermissionDenied.localizedDescription)")
+                    case .restricted:
+                        self.showRecordingStartFailure("⚠️ \(RecordingStartError.speechRecognizerUnavailable.localizedDescription)")
+                    case .notDetermined:
+                        self.showRecordingStartFailure("⚠️ 尚未取得語音辨識授權")
+                    @unknown default:
+                        self.showRecordingStartFailure("⚠️ 無法確認語音辨識權限狀態")
+                    }
+                }
+            }
+        @unknown default:
+            showRecordingStartFailure("⚠️ 無法確認語音辨識權限狀態")
+        }
+    }
+
+    private func showRecordingStartFailure(_ message: String) {
+        isRecording = false
+        isProcessing = false
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        recordingStartTime = nil
+        waveformView.reset()
+        resetButtonUI()
+        previewTextLabel.text = message
+        print("KeyboardViewController: \(message)")
+    }
+
+    private func userFacingRecordingErrorMessage(_ error: Error) -> String {
+        if let recordingError = error as? RecordingStartError {
+            return recordingError.localizedDescription
+        }
+
+        return "語音辨識啟動失敗：\(error.localizedDescription)"
+    }
+
     private func startSpeechRecognition() throws {
         recognitionTask?.cancel()
         recognitionTask = nil
         
+        guard let speechRecognizer = speechRecognizer else {
+            throw RecordingStartError.speechRecognizerUnavailable
+        }
+
+        guard speechRecognizer.isAvailable else {
+            throw RecordingStartError.speechRecognizerUnavailable
+        }
+
         let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
-        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        do {
+            try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            throw RecordingStartError.audioSessionInitializationFailed(underlying: error)
+        }
         
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let recognitionRequest = recognitionRequest else { fatalError("Unable to create request") }
@@ -434,7 +555,7 @@ class KeyboardViewController: UIInputViewController {
         audioEngine.prepare()
         try audioEngine.start()
         
-        recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+        recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
             guard let self = self else { return }
             if let result = result {
                 self.lastPartialText = result.bestTranscription.formattedString
@@ -446,11 +567,15 @@ class KeyboardViewController: UIInputViewController {
                     self.processAI(self.lastPartialText)
                 }
             }
-            if error != nil {
+            if let error = error {
+                print("KeyboardViewController recognition error: \(error)")
                 self.audioEngine.stop()
                 inputNode.removeTap(onBus: 0)
                 self.recognitionRequest = nil
                 self.recognitionTask = nil
+                DispatchQueue.main.async {
+                    self.previewTextLabel.text = "⚠️ 語音辨識中斷：\(error.localizedDescription)"
+                }
             }
         }
     }
