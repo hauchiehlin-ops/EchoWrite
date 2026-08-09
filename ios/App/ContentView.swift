@@ -529,7 +529,7 @@ struct LiveAudioTestSandboxView: View {
             var result = ""
             do {
                 if modelsReady {
-                    result = try ewProcessAudioFileWithContext(audioPath: audioPath, style: style, contextBefore: nil)
+                    result = "【本地沙盒錄音測試】：目前功能已升級為使用 SFSpeechRecognizer，請直接於系統開啟 EchoWrite 鍵盤輸入！"
                 } else {
                     // 模型下載中或未下載時降級套用本地格式化器示範
                     let demoText = "我現在要開始進行測試，如果說可以的話請幫我做好分段準備第一個我要去超商買咖啡，第二個我要進辦公室上班，第三個準備參加晨會"
@@ -1226,7 +1226,7 @@ struct VoiceDictationSheet: View {
         DispatchQueue.global(qos: .userInitiated).async {
             var processed = ""
             do {
-                processed = try ewProcessAudioFileWithContext(audioPath: audioURL.path, style: style.rawValue, contextBefore: contextBefore)
+                processed = "【錄音轉錄通知】：請於 iOS 設定中啟用 EchoWrite 鍵盤，享受原生地零延遲語音重塑體驗。"
             } catch {
                 processed = "⚠️ 辨識處理失敗：\(error.localizedDescription)"
             }

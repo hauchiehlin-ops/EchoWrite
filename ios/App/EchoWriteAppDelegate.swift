@@ -11,7 +11,7 @@ final class EchoWriteAppDelegate: NSObject, UIApplicationDelegate {
 
         do {
             // 傳 nil：交由 Rust 端自動解析 App Group 共享容器下已下載的模型路徑。
-            try ewInitialize(whisperPath: nil, llmPath: nil)
+            try ewInitialize(llmPath: nil)
         } catch {
             print("EchoWrite App: core initialization failed: \(error)")
         }

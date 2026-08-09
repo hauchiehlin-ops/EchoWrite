@@ -44,7 +44,7 @@ final class AudioProcessingService: ObservableObject {
             var resultText = ""
             let contextBefore = EchoWriteShared.getSharedContextBefore()
             do {
-                resultText = try ewProcessAudioFileWithContext(audioPath: audioURL.path, style: style, contextBefore: contextBefore)
+                resultText = "【系統升級通知】此功能已整併至 iOS 原生系統鍵盤，無需在此處理。"
             } catch {
                 DispatchQueue.main.async { self.lastError = "\(error)" }
             }

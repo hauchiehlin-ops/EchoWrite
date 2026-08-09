@@ -249,7 +249,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         accessoryView.addSubview(inputTextField)
         
         let linkButton = NSButton(title: "點此前往申請免費 Groq API Key", target: self, action: #selector(openGroqConsole))
-        linkButton.bezelStyle = .link
+        linkButton.bezelStyle = .inline
         linkButton.frame = NSRect(x: 0, y: 0, width: 350, height: 24)
         accessoryView.addSubview(linkButton)
         

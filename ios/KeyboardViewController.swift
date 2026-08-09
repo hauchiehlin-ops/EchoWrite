@@ -499,7 +499,7 @@ class KeyboardViewController: UIInputViewController {
                 }
             )
             
-            let finalText = try? echowritePolishTextStream(rawText: rawText, style: currentStyleRaw, contextBefore: contextBefore, callback: callback)
+            let finalText = try? polishTextStream(rawText: rawText, style: currentStyleRaw, contextBefore: contextBefore, callback: callback)
             
             DispatchQueue.main.async {
                 if self.isProcessing {
