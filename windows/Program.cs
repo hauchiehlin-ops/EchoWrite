@@ -486,22 +486,78 @@ namespace EchoWrite
                 if (_speechRecognizer == null)
                 {
                     _speechRecognizer = new SpeechRecognizer();
-                    await _speechRecognizer.CompileConstraintsAsync();
+                    var compilationResult = await _speechRecognizer.CompileConstraintsAsync();
+                    if (compilationResult.Status != SpeechRecognitionResultStatus.Success)
+                    {
+                        ShowWindowsSpeechStartFailure(
+                            $"語音辨識啟動失敗：初始化失敗（{DescribeCompilationStatus(compilationResult.Status)}）"
+                        );
+                        _speechRecognizer.Dispose();
+                        _speechRecognizer = null;
+                        return;
+                    }
                     _speechRecognizer.HypothesisGenerated += SpeechRecognizer_HypothesisGenerated;
                 }
 
                 _lastPartialText = "";
                 await _speechRecognizer.ContinuousRecognitionSession.StartAsync();
-                
+
                 _isRecording = true;
                 _trayIcon.Text = "EchoWrite - 聽寫中: ... (按 Alt + S 停止)";
                 Console.WriteLine("Windows: Native Speech Recognition started...");
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                ShowWindowsSpeechStartFailure($"語音辨識啟動失敗：權限不足（{ex.Message}）");
+            }
+            catch (NotSupportedException ex)
+            {
+                ShowWindowsSpeechStartFailure($"語音辨識啟動失敗：裝置或語言不支援（{ex.Message}）");
+            }
+            catch (InvalidOperationException ex)
+            {
+                ShowWindowsSpeechStartFailure($"語音辨識啟動失敗：狀態異常或忙碌中（{ex.Message}）");
+            }
+            catch (COMException ex)
+            {
+                ShowWindowsSpeechStartFailure(
+                    $"語音辨識啟動失敗：引擎啟動失敗（{ex.Message}, 0x{ex.HResult:X8}）"
+                );
+            }
             catch (Exception ex)
             {
-                _trayIcon.ShowBalloonTip(3000, "EchoWrite 錯誤", "無法啟動原生語音辨識: " + ex.Message, ToolTipIcon.Error);
-                Console.WriteLine("Windows: Failed to start recording: " + ex.Message);
+                ShowWindowsSpeechStartFailure($"語音辨識啟動失敗：{ex.Message}");
             }
+        }
+
+        private static void ShowWindowsSpeechStartFailure(string message)
+        {
+            string displayMessage = "⚠️ " + message;
+            if (_trayIcon != null)
+            {
+                _trayIcon.ShowBalloonTip(4000, "EchoWrite 錯誤", displayMessage, ToolTipIcon.Error);
+                _trayIcon.Text = "EchoWrite - 語音辨識啟動失敗";
+            }
+            Console.WriteLine("Windows: Failed to start recording: " + displayMessage);
+        }
+
+        private static string DescribeCompilationStatus(SpeechRecognitionResultStatus status)
+        {
+            return status switch
+            {
+                SpeechRecognitionResultStatus.Success => "成功",
+                SpeechRecognitionResultStatus.TopicLanguageNotSupported => "主題語言不支援",
+                SpeechRecognitionResultStatus.GrammarLanguageMismatch => "語音模型語言與規則語言不一致",
+                SpeechRecognitionResultStatus.GrammarCompilationFailure => "語法規則編譯失敗",
+                SpeechRecognitionResultStatus.AudioQualityFailure => "音質不足，請確認麥克風輸入正常",
+                SpeechRecognitionResultStatus.UserCanceled => "使用者取消",
+                SpeechRecognitionResultStatus.Unknown => "未知錯誤",
+                SpeechRecognitionResultStatus.TimeoutExceeded => "初始化逾時",
+                SpeechRecognitionResultStatus.PauseLimitExceeded => "暫停時間過長",
+                SpeechRecognitionResultStatus.NetworkFailure => "網路錯誤",
+                SpeechRecognitionResultStatus.MicrophoneUnavailable => "找不到可用麥克風",
+                _ => $"未知狀態 ({status})"
+            };
         }
 
         private static void SpeechRecognizer_HypothesisGenerated(SpeechContinuousRecognitionSession sender, SpeechRecognitionHypothesisGeneratedEventArgs args)

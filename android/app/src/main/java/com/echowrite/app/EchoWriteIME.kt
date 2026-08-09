@@ -25,6 +25,7 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.speech.SpeechRecognizer
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.FileOutputStream
@@ -365,12 +366,19 @@ class EchoWriteIME : InputMethodService() {
             return
         }
 
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            previewText?.text = "⚠️ 語音辨識啟動失敗：服務不可用"
+            previewText?.setTextColor(Color.parseColor("#FF9500"))
+            recordButton?.text = "❌ 語音引擎不可用"
+            return
+        }
+
         lastRecordedContextBefore = currentInputConnection?.getTextBeforeCursor(150, 0)?.toString() ?: ""
         lastPartialText = ""
 
         try {
             speechRecognizer?.destroy()
-            speechRecognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
             val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
@@ -386,9 +394,7 @@ class EchoWriteIME : InputMethodService() {
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
                 override fun onError(error: Int) {
-                    if (isRecording) {
-                        mainHandler.post { cancelRecording() }
-                    }
+                    mainHandler.post { handleSpeechRecognitionError(error) }
                 }
                 override fun onResults(results: Bundle?) {
                     val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
@@ -408,8 +414,17 @@ class EchoWriteIME : InputMethodService() {
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
             speechRecognizer?.startListening(intent)
-        } catch (e: Exception) {
-            previewText?.text = "⚠️ 語音辨識啟動失敗"
+        } catch (e: SecurityException) {
+            previewText?.text = "⚠️ 語音辨識啟動失敗：權限不足（${e.localizedMessage}）"
+            recordButton?.text = "❌ 權限不足"
+            return
+        } catch (e: IllegalStateException) {
+            previewText?.text = "⚠️ 語音辨識啟動失敗：辨識器狀態異常（${e.localizedMessage}）"
+            recordButton?.text = "❌ 辨識器忙碌"
+            return
+        } catch (e: RuntimeException) {
+            previewText?.text = "⚠️ 語音辨識啟動失敗：${e.localizedMessage}"
+            recordButton?.text = "❌ 啟動失敗"
             return
         }
 
@@ -425,6 +440,45 @@ class EchoWriteIME : InputMethodService() {
         previewText?.setTextColor(Color.parseColor("#00E5FF"))
 
         startTimer()
+    }
+
+    private fun handleSpeechRecognitionError(errorCode: Int) {
+        val message = describeSpeechRecognitionError(errorCode)
+        Log.e(tag, "SpeechRecognizer error: $message")
+
+        isRecording = false
+        isAudioRecording = false
+        isStoppingToProcess = false
+        timerRunnable?.let { mainHandler.removeCallbacks(it) }
+        waveformView?.reset()
+
+        try { speechRecognizer?.cancel() } catch (_: Exception) {}
+
+        previewText?.text = "⚠️ 語音辨識失敗：$message"
+        previewText?.setTextColor(Color.parseColor("#FF9500"))
+        recordButton?.isEnabled = true
+        setIdleState()
+    }
+
+    private fun describeSpeechRecognitionError(errorCode: Int): String {
+        return when (errorCode) {
+            SpeechRecognizer.ERROR_AUDIO -> "音訊擷取失敗"
+            SpeechRecognizer.ERROR_CLIENT -> "客戶端錯誤"
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "麥克風或辨識權限不足"
+            SpeechRecognizer.ERROR_NETWORK -> "網路錯誤"
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "網路逾時"
+            SpeechRecognizer.ERROR_NO_MATCH -> "沒有辨識結果"
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "辨識器忙碌中"
+            SpeechRecognizer.ERROR_SERVER -> "辨識服務回傳錯誤"
+            SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "辨識服務中斷"
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "偵測不到語音輸入"
+            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "請求過多，稍後再試"
+            SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "語言不支援"
+            SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "語言資源不可用"
+            SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT -> "無法檢查語音支援"
+            SpeechRecognizer.ERROR_CANNOT_LISTEN_TO_DOWNLOAD_EVENTS -> "無法監聽語言模型下載事件"
+            else -> "未知錯誤（$errorCode）"
+        }
     }
 
     private fun cleanupRecordingResources() {

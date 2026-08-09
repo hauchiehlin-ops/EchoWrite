@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import Speech
 
 /// EchoWrite iOS 主 App 全功能現代化儀表板
 /// 涵蓋：模型管理中心、風格偏好設定、專屬詞庫編輯器、歷史紀錄剪貼簿、鍵盤啟用診斷精靈。
