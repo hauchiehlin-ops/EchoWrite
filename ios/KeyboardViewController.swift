@@ -1,4 +1,7 @@
 import UIKit
+import os.log
+
+private let keyboardLog = OSLog(subsystem: "com.echowrite.app.keyboard", category: "OpenMainApp")
 
 /// EchoWrite iOS 專屬極速無縫 AI 鍵盤
 /// 1. 鍵盤按鈕點擊即開啟主 App 語音頁，實際錄音與語音辨識一律在主 App 內完成。
@@ -331,20 +334,44 @@ class KeyboardViewController: UIInputViewController {
         openMainAppForRecording()
     }
 
-    private func openMainAppForRecording() {
+    private func openMainAppForRecording(isRetry: Bool = false) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        guard hasFullAccess else {
+            os_log("open aborted: hasFullAccess=false", log: keyboardLog, type: .error)
+            previewTextLabel.text = "⚠️ 請先到「設定 → 一般 → 鍵盤 → EchoWrite」開啟「允許完整取用」，才能跳轉到主 App"
+            return
+        }
+
+        guard let extensionContext = extensionContext else {
+            os_log("open aborted: extensionContext is nil", log: keyboardLog, type: .error)
+            previewTextLabel.text = "⚠️ 無法開啟主 App，請先打開 EchoWrite App 再重試"
+            return
+        }
+
         previewTextLabel.text = "↗️ 正在開啟主 App 語音頁..."
 
         guard let url = URL(string: "echowrite://record?style=\(currentStyle.rawValue)") else {
+            os_log("open aborted: could not build URL for style=%{public}@", log: keyboardLog, type: .error, currentStyle.rawValue)
             previewTextLabel.text = "⚠️ 無法建立主 App 深連結"
             return
         }
 
-        extensionContext?.open(url, completionHandler: { [weak self] success in
+        os_log("calling extensionContext.open (retry=%{public}d) url=%{public}@", log: keyboardLog, type: .info, isRetry, url.absoluteString)
+
+        extensionContext.open(url, completionHandler: { [weak self] success in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                os_log("extensionContext.open completion success=%{public}d retry=%{public}d", log: keyboardLog, type: .info, success, isRetry)
                 if !success {
-                    self.previewTextLabel.text = "⚠️ 無法開啟主 App，請先打開 EchoWrite App 再重試"
+                    if !isRetry {
+                        // 冷啟動時 extensionContext 有時尚未就緒，短暫延遲後重試一次
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                            self?.openMainAppForRecording(isRetry: true)
+                        }
+                    } else {
+                        self.previewTextLabel.text = "⚠️ 無法開啟主 App，請先打開 EchoWrite App 再重試"
+                    }
                 }
             }
         })
