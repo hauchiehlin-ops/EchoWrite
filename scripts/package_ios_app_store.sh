@@ -104,6 +104,38 @@ xcodebuild archive \
   CODE_SIGN_STYLE=Automatic \
   -allowProvisioningUpdates
 
+inspect_archive_metadata() {
+  local archive_path="$1"
+  local products_dir="$archive_path/Products/Applications"
+
+  if [[ ! -d "$products_dir" ]]; then
+    echo "Archive metadata check failed: missing Products/Applications in $archive_path" >&2
+    exit 1
+  fi
+
+  echo "=== 6.5/9 Inspecting Xcode archive metadata ==="
+
+  local plist
+  while IFS= read -r plist; do
+    case "$plist" in
+      */*.app/Info.plist)
+        echo "--- Main app archive item ---"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$plist"
+        ;;
+      */*.appex/Info.plist)
+        echo "--- Extension archive item ---"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$plist"
+        ;;
+    esac
+  done < <(find "$products_dir" -type f -name Info.plist | sort)
+}
+
+inspect_archive_metadata "$ARCHIVE_PATH"
+
 echo "=== 7/9 Exporting App Store Connect IPA ==="
 cat > "$EXPORT_OPTIONS" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -131,6 +163,101 @@ xcodebuild -exportArchive \
 IPA_PATH="$(find "$EXPORT_DIR" -name '*.ipa' | head -n 1)"
 if [[ -z "$IPA_PATH" ]]; then
   echo "Export succeeded but no .ipa file was found in $EXPORT_DIR" >&2
+  exit 1
+fi
+
+inspect_ipa_metadata() {
+  local ipa_path="$1"
+  local inspect_dir
+  inspect_dir="$(mktemp -d "${TMPDIR:-/tmp}/echowrite-ios-ipa.XXXXXX")"
+
+  cleanup() {
+    rm -rf "$inspect_dir"
+  }
+  trap cleanup RETURN
+
+  unzip -qq "$ipa_path" -d "$inspect_dir"
+
+  echo "=== 7.5/9 Inspecting exported IPA metadata ==="
+
+  local found_app=0
+  local found_keyboard=0
+  local plist
+  while IFS= read -r plist; do
+    case "$plist" in
+      */Payload/*.app/Info.plist)
+        found_app=1
+        echo "--- Main app ---"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$plist"
+        ;;
+      */Payload/*.app/PlugIns/*.appex/Info.plist)
+        found_keyboard=1
+        echo "--- Extension ---"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$plist"
+        ;;
+    esac
+  done < <(find "$inspect_dir/Payload" -type f -name Info.plist | sort)
+
+  if [[ $found_app -eq 0 ]]; then
+    echo "Warning: no main app Info.plist found inside IPA" >&2
+    exit 1
+  fi
+
+  if [[ $found_keyboard -eq 0 ]]; then
+    echo "Warning: no keyboard extension Info.plist found inside IPA" >&2
+    exit 1
+  fi
+
+  local app_info_plist
+  app_info_plist="$(find "$inspect_dir/Payload" -type f -path '*/Payload/*.app/Info.plist' | head -n 1)"
+  local keyboard_info_plist
+  keyboard_info_plist="$(find "$inspect_dir/Payload" -type f -path '*/Payload/*.app/PlugIns/*.appex/Info.plist' | head -n 1)"
+
+  local app_version app_build keyboard_version keyboard_build
+  app_version="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app_info_plist")"
+  app_build="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$app_info_plist")"
+  keyboard_version="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$keyboard_info_plist")"
+  keyboard_build="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$keyboard_info_plist")"
+  IPA_MAIN_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app_info_plist")"
+  IPA_MAIN_VERSION="$app_version"
+  IPA_MAIN_BUILD="$app_build"
+  IPA_KEYBOARD_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$keyboard_info_plist")"
+  IPA_KEYBOARD_VERSION="$keyboard_version"
+  IPA_KEYBOARD_BUILD="$keyboard_build"
+
+  if [[ "$app_version" != "$APP_VERSION" || "$app_build" != "$BUILD_NUMBER" ]]; then
+    echo "IPA main app version mismatch: expected $APP_VERSION ($BUILD_NUMBER), got $app_version ($app_build)" >&2
+    exit 1
+  fi
+
+  if [[ "$keyboard_version" != "$APP_VERSION" || "$keyboard_build" != "$BUILD_NUMBER" ]]; then
+    echo "IPA extension version mismatch: expected $APP_VERSION ($BUILD_NUMBER), got $keyboard_version ($keyboard_build)" >&2
+    exit 1
+  fi
+}
+
+inspect_ipa_metadata "$IPA_PATH"
+
+echo "=== IPA Metadata Summary ==="
+echo "Expected App Bundle ID:      $APP_BUNDLE_ID"
+echo "Expected Keyboard Bundle ID: $KEYBOARD_BUNDLE_ID"
+echo "Expected Version:            $APP_VERSION ($BUILD_NUMBER)"
+echo "IPA App Bundle ID:           ${IPA_MAIN_BUNDLE_ID:-unknown}"
+echo "IPA App Version:             ${IPA_MAIN_VERSION:-unknown} (${IPA_MAIN_BUILD:-unknown})"
+echo "IPA Keyboard Bundle ID:      ${IPA_KEYBOARD_BUNDLE_ID:-unknown}"
+echo "IPA Keyboard Version:        ${IPA_KEYBOARD_VERSION:-unknown} (${IPA_KEYBOARD_BUILD:-unknown})"
+
+if [[ "${IPA_MAIN_BUNDLE_ID:-}" != "$APP_BUNDLE_ID" ]]; then
+  echo "IPA main bundle ID mismatch: expected $APP_BUNDLE_ID, got ${IPA_MAIN_BUNDLE_ID:-unknown}" >&2
+  exit 1
+fi
+
+if [[ "${IPA_KEYBOARD_BUNDLE_ID:-}" != "$KEYBOARD_BUNDLE_ID" ]]; then
+  echo "IPA keyboard bundle ID mismatch: expected $KEYBOARD_BUNDLE_ID, got ${IPA_KEYBOARD_BUNDLE_ID:-unknown}" >&2
   exit 1
 fi
 
